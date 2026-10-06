@@ -1,5 +1,6 @@
 """Data recording and schema representations for Vigil M2."""
 
+from vigil.ml.data.recorder import SessionRecorder
 from vigil.ml.data.schema import (
     CANONICAL_CLASSES,
     CameraConfig,
@@ -21,5 +22,6 @@ __all__ = [
     "ProtocolConfig",
     "SampleRecord",
     "SessionMetadata",
+    "SessionRecorder",
     "validate_label_pair",
 ]
