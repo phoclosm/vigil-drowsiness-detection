@@ -420,7 +420,7 @@ class SampleRecord:
         self.validate()
 
     def validate(self) -> None:
-        """Enforce strict D1 schema and missing-feature invariants."""
+        """Enforce strict D1 schema, identity, and missing-feature invariants."""
         # 1. Non-empty string identifiers
         if not isinstance(self.sample_id, str):
             raise TypeError(f"sample_id must be a string, got {type(self.sample_id).__name__}.")
@@ -445,13 +445,20 @@ class SampleRecord:
         if self.frame_index < 0:
             raise ValueError(f"frame_index must be >= 0, got {self.frame_index}.")
 
-        # 3. Monotonic session timestamp
+        # 3. Canonical sample identity enforcement
+        expected_sample_id = f"{self.session_id}_f{self.frame_index}"
+        if self.sample_id != expected_sample_id:
+            raise ValueError(
+                f"sample_id '{self.sample_id}' does not match canonical format '{expected_sample_id}'."
+            )
+
+        # 4. Monotonic session timestamp
         if not isinstance(self.timestamp_ms, (int, float)) or isinstance(self.timestamp_ms, bool):
             raise TypeError(f"timestamp_ms must be numeric, got {type(self.timestamp_ms).__name__}.")
         if not math.isfinite(self.timestamp_ms) or self.timestamp_ms < 0.0:
             raise ValueError(f"timestamp_ms must be finite and >= 0.0, got {self.timestamp_ms}.")
 
-        # 4. Frame delta
+        # 5. Frame delta
         if self.frame_index == 0:
             if self.timestamp_ms != 0.0:
                 raise ValueError(
@@ -467,19 +474,23 @@ class SampleRecord:
                     f"Sample at frame_index {self.frame_index} must have a positive frame_delta_ms, got None."
                 )
             if not isinstance(self.frame_delta_ms, (int, float)) or isinstance(self.frame_delta_ms, bool):
-                raise TypeError(f"frame_delta_ms must be numeric, got {type(self.frame_delta_ms).__name__}.")
+                raise TypeError(f"frame_delta_ms must be numeric, got {type(self.frame_delta_ms)}.")
             if not math.isfinite(self.frame_delta_ms) or self.frame_delta_ms <= 0.0:
                 raise ValueError(
                     f"frame_delta_ms must be finite and > 0.0 for frame_index > 0, got {self.frame_delta_ms}."
                 )
 
-        # 5. Face and landmark flags
+        # 6. Face and landmark flags
         if not isinstance(self.face_detected, bool):
             raise TypeError(f"face_detected must be an actual boolean, got {type(self.face_detected).__name__}.")
         if not isinstance(self.landmarks_valid, bool):
             raise TypeError(f"landmarks_valid must be an actual boolean, got {type(self.landmarks_valid).__name__}.")
 
-        # 6. Missing feature invariants
+        # Logical consistency: landmarks_valid=True requires face_detected=True
+        if self.landmarks_valid and not self.face_detected:
+            raise ValueError("Logical inconsistency: landmarks_valid cannot be True when face_detected is False.")
+
+        # 7. Missing feature invariants
         if not self.landmarks_valid:
             if self.ear_left is not None:
                 raise ValueError(
@@ -516,19 +527,19 @@ class SampleRecord:
                     f"is_eye_closed must be a boolean or None, got {type(self.is_eye_closed).__name__}."
                 )
 
-        # 7. Blink features
+        # 8. Blink features
         if not isinstance(self.blink_count, int) or isinstance(self.blink_count, bool):
             raise TypeError(f"blink_count must be an integer, got {type(self.blink_count).__name__}.")
         if self.blink_count < 0:
             raise ValueError(f"blink_count must be an integer >= 0, got {self.blink_count}.")
         if not isinstance(self.blink_duration_ms, (int, float)) or isinstance(self.blink_duration_ms, bool):
-            raise TypeError(f"blink_duration_ms must be numeric, got {type(self.blink_duration_ms).__name__}.")
+            raise TypeError(f"blink_duration_ms must be numeric, got {type(self.blink_duration_ms)}.")
         if not math.isfinite(self.blink_duration_ms) or self.blink_duration_ms < 0.0:
             raise ValueError(
                 f"blink_duration_ms must be finite and >= 0.0, got {self.blink_duration_ms}."
             )
 
-        # 8. PERCLOS
+        # 9. PERCLOS
         if self.perclos is not None:
             if not isinstance(self.perclos, (int, float)) or isinstance(self.perclos, bool):
                 raise TypeError(f"perclos must be numeric or None, got {type(self.perclos).__name__}.")
@@ -537,7 +548,7 @@ class SampleRecord:
             if not (0.0 <= self.perclos <= 1.0):
                 raise ValueError(f"perclos must be within [0.0, 1.0], got {self.perclos}.")
 
-        # 9. FPS
+        # 10. FPS
         if self.fps is not None:
             if not isinstance(self.fps, (int, float)) or isinstance(self.fps, bool):
                 raise TypeError(f"fps must be numeric or None, got {type(self.fps).__name__}.")
@@ -546,7 +557,7 @@ class SampleRecord:
             if self.fps <= 0.0:
                 raise ValueError(f"fps must be positive, got {self.fps}.")
 
-        # 10. Label consistency
+        # 11. Label consistency
         if not isinstance(self.label, str):
             raise TypeError(f"label must be a string, got {type(self.label).__name__}.")
         if not isinstance(self.label_id, int) or isinstance(self.label_id, bool):

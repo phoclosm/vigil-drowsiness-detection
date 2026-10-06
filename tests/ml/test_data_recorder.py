@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from vigil.ml.data.recorder import SessionRecorder
+from vigil.ml.data.recorder import SessionExistsError, SessionRecorder
 from vigil.ml.data.schema import (
     CameraConfig,
     FeatureConfig,
@@ -103,6 +103,52 @@ class TestSessionRecorder:
         assert meta_content["subject_id"] == "subject_001"
         assert meta_content["camera"]["width"] == 1920
         assert meta_content["feature_config"]["perclos"]["window_mode"] == "seconds"
+
+    def test_reopening_non_empty_session_rejected(self, tmp_path: Path) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        # 1. Record a valid sample and close the session
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
+            recorder.append(make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None))
+
+        # 2. Reopening non-empty session must be rejected with SessionExistsError
+        with pytest.raises(
+            (SessionExistsError, FileExistsError, ValueError),
+            match="already contains recorded samples.*Reopening non-empty recording sessions is not permitted",
+        ):
+            SessionRecorder(session_dir=session_dir, metadata=metadata)
+
+    def test_reopening_empty_session_with_matching_metadata_permitted(self, tmp_path: Path) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        # 1. Initialize session without writing any samples
+        recorder = SessionRecorder(session_dir=session_dir, metadata=metadata)
+        recorder.close()
+
+        # 2. Reopening an empty session with matching metadata is allowed
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder2:
+            recorder2.append(make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None))
+            assert recorder2.sample_count == 1
+
+    def test_incompatible_existing_metadata_rejected(self, tmp_path: Path) -> None:
+        metadata_a = make_metadata(session_id="session_001", subject_id="subject_001")
+        session_dir = tmp_path / metadata_a.session_id
+
+        # Create session directory and write metadata A
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_dir.joinpath("session_meta.json").write_text(
+            metadata_a.to_json(), encoding="utf-8"
+        )
+
+        # Attempt to open recorder with conflicting metadata B (different subject_id)
+        metadata_b = make_metadata(session_id="session_001", subject_id="subject_002")
+        with pytest.raises(
+            ValueError,
+            match="Existing metadata.*does not match supplied session metadata",
+        ):
+            SessionRecorder(session_dir=session_dir, metadata=metadata_b)
 
     def test_samples_file_format_and_ordering(self, tmp_path: Path) -> None:
         metadata = make_metadata()

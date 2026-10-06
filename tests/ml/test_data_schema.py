@@ -172,6 +172,117 @@ class TestSampleRecordValidation:
         assert sample.label == "AMBIGUOUS"
         assert sample.label_id == -1
 
+    def test_canonical_sample_id_accepted(self) -> None:
+        # Canonical format is {session_id}_f{frame_index}
+        s0 = make_valid_sample(session_id="session_001", frame_index=0)
+        assert s0.sample_id == "session_001_f0"
+
+        s17 = make_valid_sample(
+            session_id="session_001",
+            frame_index=17,
+            timestamp_ms=566.6,
+            frame_delta_ms=33.3,
+        )
+        assert s17.sample_id == "session_001_f17"
+
+    def test_incorrect_sample_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="does not match canonical format"):
+            SampleRecord(
+                sample_id="wrong_id",
+                session_id="session_001",
+                subject_id="subject_001",
+                frame_index=0,
+                timestamp_ms=0.0,
+                frame_delta_ms=None,
+                face_detected=True,
+                landmarks_valid=True,
+                ear_left=0.3,
+                ear_right=0.3,
+                ear_avg=0.3,
+                is_eye_closed=False,
+                blink_count=0,
+                blink_duration_ms=0.0,
+                perclos=None,
+                fps=30.0,
+                label="ACTIVE",
+                label_id=0,
+            )
+
+        with pytest.raises(ValueError, match="does not match canonical format"):
+            # Mismatched frame index in sample_id
+            SampleRecord(
+                sample_id="session_001_f1",
+                session_id="session_001",
+                subject_id="subject_001",
+                frame_index=0,
+                timestamp_ms=0.0,
+                frame_delta_ms=None,
+                face_detected=True,
+                landmarks_valid=True,
+                ear_left=0.3,
+                ear_right=0.3,
+                ear_avg=0.3,
+                is_eye_closed=False,
+                blink_count=0,
+                blink_duration_ms=0.0,
+                perclos=None,
+                fps=30.0,
+                label="ACTIVE",
+                label_id=0,
+            )
+
+    def test_face_detected_false_with_landmarks_valid_true_rejected(self) -> None:
+        # landmarks_valid=True requires face_detected=True
+        with pytest.raises(
+            ValueError,
+            match="landmarks_valid cannot be True when face_detected is False",
+        ):
+            SampleRecord(
+                sample_id="session_001_f0",
+                session_id="session_001",
+                subject_id="subject_001",
+                frame_index=0,
+                timestamp_ms=0.0,
+                frame_delta_ms=None,
+                face_detected=False,  # Inconsistent: face not detected but landmarks true
+                landmarks_valid=True,
+                ear_left=0.3,
+                ear_right=0.3,
+                ear_avg=0.3,
+                is_eye_closed=False,
+                blink_count=0,
+                blink_duration_ms=0.0,
+                perclos=None,
+                fps=30.0,
+                label="ACTIVE",
+                label_id=0,
+            )
+
+    def test_face_detected_true_with_landmarks_valid_false_accepted(self) -> None:
+        # Face detected but landmarks failed validation is valid
+        sample = SampleRecord(
+            sample_id="session_001_f0",
+            session_id="session_001",
+            subject_id="subject_001",
+            frame_index=0,
+            timestamp_ms=0.0,
+            frame_delta_ms=None,
+            face_detected=True,
+            landmarks_valid=False,
+            ear_left=None,
+            ear_right=None,
+            ear_avg=None,
+            is_eye_closed=None,
+            blink_count=0,
+            blink_duration_ms=0.0,
+            perclos=None,
+            fps=30.0,
+            label="ACTIVE",
+            label_id=0,
+        )
+        assert sample.face_detected is True
+        assert sample.landmarks_valid is False
+
     def test_label_id_mismatch_rejected(self) -> None:
         with pytest.raises(ValueError, match="does not match supplied label_id"):
             make_valid_sample(label="ACTIVE", label_id=1)

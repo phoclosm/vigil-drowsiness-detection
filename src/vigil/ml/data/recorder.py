@@ -7,17 +7,16 @@ serializes them to disk according to docs/m2-data-contract.md.
 
 from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
 
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 from vigil.ml.data.schema import SampleRecord, SessionMetadata
+
+
+class SessionExistsError(FileExistsError, ValueError):
+    """Raised when attempting to reopen an existing non-empty recording session."""
 
 
 class SessionRecorder:
@@ -29,11 +28,13 @@ class SessionRecorder:
 
     Responsibilities:
         1. Creates the session directory.
-        2. Writes session_meta.json deterministically once upon initialization.
-        3. Appends strictly validated SampleRecord instances to samples.jsonl.
-        4. Maintains the previous frame index and timestamp to enforce temporal monotonicity.
-        5. Refuses writes after close.
-        6. Operates as a Python context manager.
+        2. Protects session metadata provenance (writes once for new sessions,
+           verifies exact equality if metadata already exists with no samples).
+        3. Rejects initialization if samples.jsonl already contains samples.
+        4. Appends strictly validated SampleRecord instances to samples.jsonl.
+        5. Maintains the previous frame index and timestamp to enforce temporal monotonicity.
+        6. Refuses writes after close.
+        7. Operates as a standard Python context manager without external dependencies.
     """
 
     def __init__(
@@ -69,12 +70,36 @@ class SessionRecorder:
         self._meta_path = self._session_dir / "session_meta.json"
         self._samples_path = self._session_dir / "samples.jsonl"
 
-        # Create session directory
-        self._session_dir.mkdir(parents=True, exist_ok=True)
+        # 1. Reject reopening a non-empty recording session
+        if self._samples_path.exists() and self._samples_path.stat().st_size > 0:
+            content = self._samples_path.read_text(encoding="utf-8").strip()
+            if content:
+                raise SessionExistsError(
+                    f"Session directory at '{self._session_dir}' already contains recorded samples in "
+                    f"'{self._samples_path.name}'. Reopening non-empty recording sessions is not permitted."
+                )
 
-        # Write session metadata once
-        if not self._meta_path.exists():
+        # 2. Protect session metadata provenance
+        if self._meta_path.exists():
+            try:
+                existing_meta_dict = json.loads(self._meta_path.read_text(encoding="utf-8"))
+                existing_meta = SessionMetadata.from_dict(existing_meta_dict)
+            except Exception as e:
+                raise ValueError(
+                    f"Existing metadata at '{self._meta_path}' is corrupted or unreadable: {e}"
+                ) from e
+
+            if existing_meta.to_dict() != self._metadata.to_dict():
+                raise ValueError(
+                    f"Existing metadata at '{self._meta_path}' does not match supplied session metadata."
+                )
+        else:
+            # Create session directory and write metadata for a new session
+            self._session_dir.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(self._metadata.to_json(), encoding="utf-8")
+
+        # Ensure session directory exists if it didn't already
+        self._session_dir.mkdir(parents=True, exist_ok=True)
 
         # Open samples file for appending; lifecycle is managed by close() and __exit__()
         self._file: TextIO | None = open(self._samples_path, "a", encoding="utf-8")  # noqa: SIM115
@@ -229,7 +254,7 @@ class SessionRecorder:
                 self._file.flush()
                 self._file.close()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> SessionRecorder:  # noqa: PYI034
         """Enter context manager."""
         return self
 
