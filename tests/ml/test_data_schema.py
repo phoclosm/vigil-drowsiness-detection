@@ -60,12 +60,16 @@ def make_valid_sample(
     label: str = "ACTIVE",
     label_id: int = 0,
     landmarks_valid: bool = True,
+    ear_left: float | None = 0.32,
+    ear_right: float | None = 0.32,
     ear_avg: float | None = 0.32,
     session_id: str = "session_001",
     subject_id: str = "subject_001",
 ) -> SampleRecord:
     """Helper to construct a valid SampleRecord instance."""
-    ear_val = ear_avg if landmarks_valid else None
+    left = ear_left if landmarks_valid else None
+    right = ear_right if landmarks_valid else None
+    avg = ear_avg if landmarks_valid else None
     return SampleRecord(
         sample_id=f"{session_id}_f{frame_index}",
         session_id=session_id,
@@ -75,9 +79,9 @@ def make_valid_sample(
         frame_delta_ms=frame_delta_ms,
         face_detected=landmarks_valid,
         landmarks_valid=landmarks_valid,
-        ear_left=ear_val,
-        ear_right=ear_val,
-        ear_avg=ear_val,
+        ear_left=left,
+        ear_right=right,
+        ear_avg=avg,
         is_eye_closed=False if landmarks_valid else None,
         blink_count=0,
         blink_duration_ms=0.0,
@@ -547,6 +551,49 @@ class TestSampleRecordValidation:
 
         restored = SampleRecord.from_json(json_str)
         assert restored == sample
+
+    def test_ear_greater_than_max_rejected(self) -> None:
+        # EAR values > 0.60 must be rejected
+        with pytest.raises(ValueError, match="ear_left must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=0.61, ear_right=0.30, ear_avg=0.455)
+
+        with pytest.raises(ValueError, match="ear_right must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=0.30, ear_right=0.65, ear_avg=0.475)
+
+        with pytest.raises(ValueError, match="ear_avg must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=0.30, ear_right=0.30, ear_avg=0.61)
+
+    def test_ear_less_than_min_rejected(self) -> None:
+        # EAR values < 0.0 must be rejected
+        with pytest.raises(ValueError, match="ear_left must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=-0.01, ear_right=0.30, ear_avg=0.145)
+
+        with pytest.raises(ValueError, match="ear_right must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=0.30, ear_right=-0.05, ear_avg=0.125)
+
+        with pytest.raises(ValueError, match="ear_avg must be within \\[0.0, 0.60\\]"):
+            make_valid_sample(ear_left=0.30, ear_right=0.30, ear_avg=-0.01)
+
+    def test_inconsistent_ear_avg_rejected(self) -> None:
+        # ear_avg != (ear_left + ear_right) / 2 must be rejected
+        with pytest.raises(ValueError, match="Inconsistent ear_avg"):
+            make_valid_sample(ear_left=0.30, ear_right=0.30, ear_avg=0.35)
+
+        with pytest.raises(ValueError, match="Inconsistent ear_avg"):
+            make_valid_sample(ear_left=0.20, ear_right=0.22, ear_avg=0.25)
+
+    def test_consistent_ear_avg_accepted(self) -> None:
+        # Exact average
+        sample1 = make_valid_sample(ear_left=0.25, ear_right=0.27, ear_avg=0.26)
+        assert sample1.ear_avg == 0.26
+
+        # Average with decimal within tolerance 1e-3
+        sample2 = make_valid_sample(ear_left=0.250, ear_right=0.251, ear_avg=0.2505)
+        assert math.isclose(sample2.ear_avg, 0.2505)
+
+        # Serialized 3-decimal rounded representation (diff = 0.0005 <= 1e-3)
+        sample3 = make_valid_sample(ear_left=0.250, ear_right=0.251, ear_avg=0.251)
+        assert sample3.ear_avg == 0.251
 
 
 class TestSessionMetadataValidation:

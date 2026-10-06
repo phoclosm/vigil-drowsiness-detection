@@ -56,12 +56,20 @@ def make_sample(
     session_id: str = "session_001",
     subject_id: str = "subject_001",
     landmarks_valid: bool = True,
+    ear_left: float | None = 0.30,
+    ear_right: float | None = 0.30,
     ear_avg: float | None = 0.30,
+    blink_count: int = 0,
+    blink_duration_ms: float = 0.0,
+    perclos: float | None = 0.04,
+    fps: float | None = 30.0,
     label: str = "ACTIVE",
     label_id: int = 0,
 ) -> SampleRecord:
     """Helper to create a valid SampleRecord."""
-    ear_val = ear_avg if landmarks_valid else None
+    left = ear_left if landmarks_valid else None
+    right = ear_right if landmarks_valid else None
+    avg = ear_avg if landmarks_valid else None
     return SampleRecord(
         sample_id=f"{session_id}_f{frame_index}",
         session_id=session_id,
@@ -71,14 +79,14 @@ def make_sample(
         frame_delta_ms=frame_delta_ms,
         face_detected=landmarks_valid,
         landmarks_valid=landmarks_valid,
-        ear_left=ear_val,
-        ear_right=ear_val,
-        ear_avg=ear_val,
+        ear_left=left,
+        ear_right=right,
+        ear_avg=avg,
         is_eye_closed=False if landmarks_valid else None,
-        blink_count=0,
-        blink_duration_ms=0.0,
-        perclos=0.04 if landmarks_valid else None,
-        fps=30.0,
+        blink_count=blink_count,
+        blink_duration_ms=blink_duration_ms,
+        perclos=perclos if landmarks_valid else None,
+        fps=fps,
         label=label,
         label_id=label_id,
     )
@@ -369,3 +377,64 @@ class TestSessionRecorder:
             "label_id",
         ]
         assert list(data.keys()) == expected_keys
+
+    def test_decreasing_blink_count_rejected(self, tmp_path: Path) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
+            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=5)
+            recorder.append(s0)
+
+            # Cumulative blink count decreases from 5 to 4 -> must be rejected!
+            s1 = make_sample(frame_index=1, timestamp_ms=33.3, frame_delta_ms=33.3, blink_count=4)
+            with pytest.raises(
+                ValueError,
+                match="Cumulative blink_count cannot decrease: current 4 < previous 5",
+            ):
+                recorder.append(s1)
+
+            # Non-decreasing count is accepted
+            s1_valid = make_sample(frame_index=1, timestamp_ms=33.3, frame_delta_ms=33.3, blink_count=5)
+            recorder.append(s1_valid)
+            s2_valid = make_sample(frame_index=2, timestamp_ms=66.6, frame_delta_ms=33.3, blink_count=6)
+            recorder.append(s2_valid)
+            assert recorder.sample_count == 3
+
+    def test_non_monotonic_quantities_allowed_to_vary(self, tmp_path: Path) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        # blink_duration_ms, perclos, and fps are allowed to increase or decrease
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
+            s0 = make_sample(
+                frame_index=0,
+                timestamp_ms=0.0,
+                frame_delta_ms=None,
+                blink_count=1,
+                blink_duration_ms=150.0,
+                perclos=0.25,
+                fps=30.0,
+            )
+            s1 = make_sample(
+                frame_index=1,
+                timestamp_ms=33.3,
+                frame_delta_ms=33.3,
+                blink_count=1,
+                blink_duration_ms=0.0,  # decreased
+                perclos=0.10,  # decreased
+                fps=28.5,  # decreased
+            )
+            s2 = make_sample(
+                frame_index=2,
+                timestamp_ms=66.6,
+                frame_delta_ms=33.3,
+                blink_count=2,
+                blink_duration_ms=200.0,  # increased
+                perclos=0.35,  # increased
+                fps=29.8,  # increased
+            )
+            recorder.append(s0)
+            recorder.append(s1)
+            recorder.append(s2)
+            assert recorder.sample_count == 3

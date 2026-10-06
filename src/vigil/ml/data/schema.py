@@ -519,8 +519,22 @@ class SampleRecord:
                         raise TypeError(f"{ear_name} must be numeric or None, got {type(ear_val).__name__}.")
                     if not math.isfinite(ear_val):
                         raise ValueError(f"{ear_name} must be finite or None, got {ear_val}.")
-                    if ear_val < 0.0:
-                        raise ValueError(f"{ear_name} must be >= 0.0, got {ear_val}.")
+                    if ear_val < 0.0 or ear_val > 0.60:
+                        raise ValueError(f"{ear_name} must be within [0.0, 0.60], got {ear_val}.")
+
+            # Consistency between ear_avg and (ear_left + ear_right) / 2
+            if (
+                self.ear_left is not None
+                and self.ear_right is not None
+                and self.ear_avg is not None
+            ):
+                expected_avg = (self.ear_left + self.ear_right) / 2.0
+                if not math.isclose(self.ear_avg, expected_avg, abs_tol=1e-3):
+                    raise ValueError(
+                        f"Inconsistent ear_avg: got {self.ear_avg}, but expected "
+                        f"({self.ear_left} + {self.ear_right}) / 2.0 = {expected_avg:.4f} "
+                        f"(tolerance 1e-3)."
+                    )
 
             if self.is_eye_closed is not None and not isinstance(self.is_eye_closed, bool):
                 raise TypeError(

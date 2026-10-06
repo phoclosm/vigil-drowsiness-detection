@@ -154,6 +154,7 @@ class SessionRecorder:
             - Timestamps must be strictly monotonically increasing.
             - Frame deltas must match timestamp differences within floating-point tolerance.
             - Missing landmark features must be null, not 0.0.
+            - Cumulative blink_count must be non-decreasing (current >= previous).
             - Real capture timing is preserved truthfully: large positive deltas
               representing capture stalls are recorded as measured and are NOT clamped.
             - Ambiguous labels (label_id=-1) are recorded as supplied without filtering.
@@ -236,6 +237,13 @@ class SessionRecorder:
                 raise ValueError(
                     f"frame_delta_ms ({sample.frame_delta_ms}) does not match timestamp difference "
                     f"({expected_delta:.4f}) for frame {sample.frame_index}."
+                )
+
+            # 4. Cumulative blink_count non-decreasing
+            if sample.blink_count < prev.blink_count:
+                raise ValueError(
+                    f"Cumulative blink_count cannot decrease: current {sample.blink_count} < "
+                    f"previous {prev.blink_count} at frame_index {sample.frame_index}."
                 )
 
         # Write sample to JSON Lines deterministically

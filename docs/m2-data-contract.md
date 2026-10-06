@@ -45,7 +45,7 @@ M2 defines exactly three mutually exclusive fatigue classes. The canonical order
 
 ## 3. Training Record Schema
 
-The D2 data recorder must emit structured, tabular records. The schema is designed for flat serialization (CSV or JSON Lines) accompanied by session-level metadata (`session_meta.json`).
+The D2 data recorder must emit structured, tabular records. The schema is designed for JSON Lines serialization (`samples.jsonl`) accompanied by session-level metadata (`session_meta.json`).
 
 ### 3.1 Field Specifications
 
@@ -77,7 +77,12 @@ The D2 data recorder must emit structured, tabular records. The schema is design
    * **Invariant**: Missing landmark measurements must **never** be silently imputed as `0.0` during data collection, because `0.0` indicates complete eye closure.
 2. **Session Storage and Metadata Convention**:
    Each recorded session produces a self-contained directory under `data/recordings/{session_id}/`:
-   * `samples.csv` (or `samples.jsonl`): Tabular rows adhering strictly to the schema above.
+   ```text
+   data/recordings/{session_id}/
+       samples.jsonl
+       session_meta.json
+   ```
+   * `samples.jsonl`: Tabular records stored as JSON Lines adhering strictly to the schema above.
    * `session_meta.json`: Top-level metadata recording:
      * `session_id` and stable anonymized `subject_id`.
      * Wall-clock capture start (ISO 8601 UTC timestamp).
