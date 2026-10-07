@@ -6,6 +6,7 @@ from vigil.runtime.capture import (
     CaptureError,
     CaptureOpenError,
     CaptureReadError,
+    CaptureSource,
     CaptureStream,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "CaptureError",
     "CaptureOpenError",
     "CaptureReadError",
+    "CaptureSource",
     "CaptureStream",
 ]
