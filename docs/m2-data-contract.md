@@ -45,7 +45,7 @@ M2 defines exactly three mutually exclusive fatigue classes. The canonical order
 
 ## 3. Training Record Schema
 
-The D2 data recorder must emit structured, tabular records. The schema is designed for flat serialization (CSV or JSON Lines) accompanied by session-level metadata (`session_meta.json`).
+The D2 data recorder must emit structured, tabular records. The schema is designed for JSON Lines serialization (`samples.jsonl`) accompanied by session-level metadata (`session_meta.json`).
 
 ### 3.1 Field Specifications
 
@@ -56,7 +56,7 @@ The D2 data recorder must emit structured, tabular records. The schema is design
 | `subject_id` | `string` | — | Required | Anonymized identifier (e.g., `subject_001`) | Stable anonymized identifier for the recorded subject. Free of personally identifying information. | Must not be empty. |
 | `frame_index` | `int` | frames | Required | $[0, \infty)$ | Zero-indexed sequential frame counter within the session. Monotonically increasing. | Cannot be negative; cannot decrement. |
 | `timestamp_ms` | `float` | ms | Required | $[0.0, \infty)$ | Monotonic elapsed capture time from the beginning of the recording session ($t_0 = 0.0$). | Must be strictly increasing ($t_i > t_{i-1}$). Epoch time is stored in session metadata. |
-| `frame_delta_ms` | `float` | ms | Required for frame > 0 | $(0.0, 1000.0]$ | Time elapsed since the previous captured frame: $t_i - t_{i-1}$. | Must be `null` for frame 0 (no previous frame exists). If $> 1000.0$ ms, indicates capture stall. |
+| `frame_delta_ms` | `float` | ms | Required for frame > 0 | $(0.0, \infty)$ | Time elapsed since previous captured frame ($t_i - t_{i-1}$). Positive measured deltas are preserved without clamping; large values represent stalls/gaps. | Must be `null` for frame 0 (no previous frame exists). |
 | `face_detected` | `bool` | — | Required | `True`, `False` | Flag indicating whether a human face was localized in the frame. | If `False`, all downstream facial features are invalid. |
 | `landmarks_valid` | `bool` | — | Required | `True`, `False` | Flag indicating whether eye landmark coordinates passed confidence and geometric validity checks. | If `False`, eye features are invalid. |
 | `ear_left` | `float` | ratio | Optional | $[0.0, 0.60]$ | Eye Aspect Ratio for the left eye calculated from canonical landmarks. | `null` / `NaN` if `landmarks_valid == False`. Must not be coerced to `0.0`. |
@@ -77,7 +77,12 @@ The D2 data recorder must emit structured, tabular records. The schema is design
    * **Invariant**: Missing landmark measurements must **never** be silently imputed as `0.0` during data collection, because `0.0` indicates complete eye closure.
 2. **Session Storage and Metadata Convention**:
    Each recorded session produces a self-contained directory under `data/recordings/{session_id}/`:
-   * `samples.csv` (or `samples.jsonl`): Tabular rows adhering strictly to the schema above.
+   ```text
+   data/recordings/{session_id}/
+       samples.jsonl
+       session_meta.json
+   ```
+   * `samples.jsonl`: Tabular records stored as JSON Lines adhering strictly to the schema above.
    * `session_meta.json`: Top-level metadata recording:
      * `session_id` and stable anonymized `subject_id`.
      * Wall-clock capture start (ISO 8601 UTC timestamp).
