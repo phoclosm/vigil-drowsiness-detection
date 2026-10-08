@@ -214,7 +214,14 @@ class MediaPipeFaceLandmarkDetector:
             raise ValueError("frame must not be None")
 
         result = self._backend.process(self._color_converter(frame))
-        raw_faces = result.multi_face_landmarks
+        try:
+            raw_faces = result.multi_face_landmarks
+        except AttributeError as error:
+            raise LandmarkOutputError(
+                "detector result does not contain face landmarks"
+            ) from error
+        if not raw_faces:
+            return ()
         return tuple(self._convert_face(face) for face in raw_faces)
 
     @staticmethod
