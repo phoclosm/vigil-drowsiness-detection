@@ -12,6 +12,17 @@ from vigil.runtime.capture import (
     FrameTimer,
     FrameTiming,
 )
+from vigil.runtime.landmarks import (
+    FaceLandmarkConfig,
+    FaceLandmarkDetector,
+    FaceLandmarks,
+    LandmarkDependencyError,
+    LandmarkError,
+    LandmarkOpenError,
+    LandmarkOutputError,
+    MediaPipeFaceLandmarkDetector,
+    NormalizedLandmark,
+)
 
 __all__ = [
     "CapturedFrame",
@@ -24,4 +35,13 @@ __all__ = [
     "CaptureStream",
     "FrameTimer",
     "FrameTiming",
+    "FaceLandmarkConfig",
+    "FaceLandmarkDetector",
+    "FaceLandmarks",
+    "LandmarkDependencyError",
+    "LandmarkError",
+    "LandmarkOpenError",
+    "LandmarkOutputError",
+    "MediaPipeFaceLandmarkDetector",
+    "NormalizedLandmark",
 ]
