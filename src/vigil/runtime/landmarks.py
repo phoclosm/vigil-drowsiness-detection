@@ -56,6 +56,32 @@ class FaceLandmarks:
         return self.points[index]
 
 
+# Ordered as corner, upper lid, upper lid, corner, lower lid, lower lid so
+# Day 4 can apply the standard six-point EAR formula without reordering.
+LEFT_EYE_LANDMARK_INDICES = (362, 385, 387, 263, 373, 380)
+RIGHT_EYE_LANDMARK_INDICES = (33, 160, 158, 133, 153, 144)
+
+
+@dataclass(frozen=True, slots=True)
+class EyeLandmarks:
+    """Normalized six-point coordinates for both eyes of one face."""
+
+    left: tuple[NormalizedLandmark, ...]
+    right: tuple[NormalizedLandmark, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.left) != 6 or len(self.right) != 6:
+            raise ValueError("each eye must contain exactly six landmarks")
+
+
+def extract_eye_landmarks(face: FaceLandmarks) -> EyeLandmarks:
+    """Extract ordered left and right eye points from one face mesh."""
+    return EyeLandmarks(
+        left=tuple(face.point(index) for index in LEFT_EYE_LANDMARK_INDICES),
+        right=tuple(face.point(index) for index in RIGHT_EYE_LANDMARK_INDICES),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FaceLandmarkConfig:
     """MediaPipe Face Mesh settings for real-time frame processing."""
