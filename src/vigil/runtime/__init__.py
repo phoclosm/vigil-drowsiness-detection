@@ -28,6 +28,9 @@ from vigil.runtime.landmarks import (
     extract_eye_landmarks,
 )
 from vigil.runtime.eye_features import (
+    BlinkState,
+    BlinkTracker,
+    BlinkTrackerConfig,
     EyeAspectRatios,
     EyeFeatureError,
     calculate_eye_aspect_ratio,
@@ -60,6 +63,9 @@ __all__ = [
     "extract_eye_landmarks",
     "EyeAspectRatios",
     "EyeFeatureError",
+    "BlinkState",
+    "BlinkTracker",
+    "BlinkTrackerConfig",
     "calculate_eye_aspect_ratio",
     "calculate_eye_aspect_ratios",
 ]
