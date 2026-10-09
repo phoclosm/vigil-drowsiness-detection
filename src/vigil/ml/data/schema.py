@@ -546,6 +546,10 @@ class SampleRecord:
             raise TypeError(f"blink_count must be an integer, got {type(self.blink_count).__name__}.")
         if self.blink_count < 0:
             raise ValueError(f"blink_count must be an integer >= 0, got {self.blink_count}.")
+        if self.frame_index == 0 and self.blink_count != 0:
+            raise ValueError(
+                f"First sample (frame_index=0) must have blink_count == 0, got {self.blink_count}."
+            )
         if not isinstance(self.blink_duration_ms, (int, float)) or isinstance(self.blink_duration_ms, bool):
             raise TypeError(f"blink_duration_ms must be numeric, got {type(self.blink_duration_ms)}.")
         if not math.isfinite(self.blink_duration_ms) or self.blink_duration_ms < 0.0:
@@ -570,6 +574,8 @@ class SampleRecord:
                 raise ValueError(f"fps must be finite or None, got {self.fps}.")
             if self.fps <= 0.0:
                 raise ValueError(f"fps must be positive, got {self.fps}.")
+            if self.fps > 120.0:
+                raise ValueError(f"fps must be <= 120.0, got {self.fps}.")
 
         # 11. Label consistency
         if not isinstance(self.label, str):

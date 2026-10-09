@@ -378,28 +378,63 @@ class TestSessionRecorder:
         ]
         assert list(data.keys()) == expected_keys
 
+    def test_first_sample_non_zero_blink_count_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
+            # 1. Direct construction of frame 0 with non-zero blink count is rejected by schema
+            with pytest.raises(
+                ValueError,
+                match=r"^First sample \(frame_index=0\) must have blink_count == 0, got 1\.$",
+            ) as exc_schema:
+                make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=1)
+            assert str(exc_schema.value) == "First sample (frame_index=0) must have blink_count == 0, got 1."
+
+            # 2. Defense in depth: recorder.append() also rejects non-zero blink count on first sample
+            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=0)
+            object.__setattr__(s0, "blink_count", 1)
+
+            # Temporarily bypass schema validation so execution reaches the recorder's own guard
+            monkeypatch.setattr(SampleRecord, "validate", lambda self: None)
+
+            with pytest.raises(
+                ValueError,
+                match=r"^First sample must have blink_count == 0, got 1\.$",
+            ) as exc_recorder:
+                recorder.append(s0)
+
+            # Assert recorder-specific error message exactly, distinguishing from schema-level error
+            assert str(exc_recorder.value) == "First sample must have blink_count == 0, got 1."
+            assert "(frame_index=0)" not in str(exc_recorder.value)
+
     def test_decreasing_blink_count_rejected(self, tmp_path: Path) -> None:
         metadata = make_metadata()
         session_dir = tmp_path / metadata.session_id
 
         with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
-            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=5)
+            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=0)
             recorder.append(s0)
 
-            # Cumulative blink count decreases from 5 to 4 -> must be rejected!
-            s1 = make_sample(frame_index=1, timestamp_ms=33.3, frame_delta_ms=33.3, blink_count=4)
+            s1 = make_sample(frame_index=1, timestamp_ms=33.3, frame_delta_ms=33.3, blink_count=2)
+            recorder.append(s1)
+
+            # Cumulative blink count decreases from 2 to 1 -> must be rejected!
+            s2_bad = make_sample(frame_index=2, timestamp_ms=66.6, frame_delta_ms=33.3, blink_count=1)
             with pytest.raises(
                 ValueError,
-                match="Cumulative blink_count cannot decrease: current 4 < previous 5",
+                match="Cumulative blink_count cannot decrease: current 1 < previous 2",
             ):
-                recorder.append(s1)
+                recorder.append(s2_bad)
 
             # Non-decreasing count is accepted
-            s1_valid = make_sample(frame_index=1, timestamp_ms=33.3, frame_delta_ms=33.3, blink_count=5)
-            recorder.append(s1_valid)
-            s2_valid = make_sample(frame_index=2, timestamp_ms=66.6, frame_delta_ms=33.3, blink_count=6)
+            s2_valid = make_sample(frame_index=2, timestamp_ms=66.6, frame_delta_ms=33.3, blink_count=2)
             recorder.append(s2_valid)
-            assert recorder.sample_count == 3
+            s3_valid = make_sample(frame_index=3, timestamp_ms=99.9, frame_delta_ms=33.3, blink_count=3)
+            recorder.append(s3_valid)
+            assert recorder.sample_count == 4
 
     def test_non_monotonic_quantities_allowed_to_vary(self, tmp_path: Path) -> None:
         metadata = make_metadata()
@@ -411,7 +446,7 @@ class TestSessionRecorder:
                 frame_index=0,
                 timestamp_ms=0.0,
                 frame_delta_ms=None,
-                blink_count=1,
+                blink_count=0,
                 blink_duration_ms=150.0,
                 perclos=0.25,
                 fps=30.0,
@@ -420,7 +455,7 @@ class TestSessionRecorder:
                 frame_index=1,
                 timestamp_ms=33.3,
                 frame_delta_ms=33.3,
-                blink_count=1,
+                blink_count=0,
                 blink_duration_ms=0.0,  # decreased
                 perclos=0.10,  # decreased
                 fps=28.5,  # decreased
@@ -429,7 +464,7 @@ class TestSessionRecorder:
                 frame_index=2,
                 timestamp_ms=66.6,
                 frame_delta_ms=33.3,
-                blink_count=2,
+                blink_count=1,  # non-decreasing
                 blink_duration_ms=200.0,  # increased
                 perclos=0.35,  # increased
                 fps=29.8,  # increased
@@ -438,3 +473,17 @@ class TestSessionRecorder:
             recorder.append(s1)
             recorder.append(s2)
             assert recorder.sample_count == 3
+
+    def test_frame_index_gaps_permitted_when_frames_dropped(self, tmp_path: Path) -> None:
+        metadata = make_metadata()
+        session_dir = tmp_path / metadata.session_id
+
+        with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
+            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None)
+            # Frame gap: 0 -> 5 (frames 1-4 dropped by capture pipeline)
+            s5 = make_sample(frame_index=5, timestamp_ms=166.7, frame_delta_ms=166.7)
+            recorder.append(s0)
+            recorder.append(s5)
+            assert recorder.sample_count == 2
+            assert recorder.prev_sample is not None
+            assert recorder.prev_sample.frame_index == 5

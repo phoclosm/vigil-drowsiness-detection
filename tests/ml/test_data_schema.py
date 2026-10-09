@@ -63,6 +63,7 @@ def make_valid_sample(
     ear_left: float | None = 0.32,
     ear_right: float | None = 0.32,
     ear_avg: float | None = 0.32,
+    fps: float | None = 30.0,
     session_id: str = "session_001",
     subject_id: str = "subject_001",
 ) -> SampleRecord:
@@ -86,7 +87,7 @@ def make_valid_sample(
         blink_count=0,
         blink_duration_ms=0.0,
         perclos=0.05 if landmarks_valid else None,
-        fps=30.0,
+        fps=fps,
         label=label,
         label_id=label_id,
     )
@@ -594,6 +595,108 @@ class TestSampleRecordValidation:
         # Serialized 3-decimal rounded representation (diff = 0.0005 <= 1e-3)
         sample3 = make_valid_sample(ear_left=0.250, ear_right=0.251, ear_avg=0.251)
         assert sample3.ear_avg == 0.251
+
+    def test_fps_range_invariants(self) -> None:
+        # fps == 0 rejected
+        with pytest.raises(ValueError, match="fps must be positive"):
+            make_valid_sample(fps=0.0)
+
+        # fps < 0 rejected
+        with pytest.raises(ValueError, match="fps must be positive"):
+            make_valid_sample(fps=-10.0)
+
+        # fps == 120 accepted
+        sample_120 = make_valid_sample(fps=120.0)
+        assert sample_120.fps == 120.0
+
+        # fps > 120 rejected
+        with pytest.raises(ValueError, match="fps must be <= 120.0"):
+            make_valid_sample(fps=120.1)
+
+        with pytest.raises(ValueError, match="fps must be <= 120.0"):
+            make_valid_sample(fps=240.0)
+
+        # fps is None accepted (optional field)
+        sample_none = make_valid_sample(fps=None)
+        assert sample_none.fps is None
+
+    def test_first_frame_non_zero_blink_count_rejected(self) -> None:
+        # Schema-level validation rejects blink_count > 0 on frame_index=0
+        with pytest.raises(
+            ValueError,
+            match="First sample \\(frame_index=0\\) must have blink_count == 0, got 1",
+        ):
+            SampleRecord(
+                sample_id="session_001_f0",
+                session_id="session_001",
+                subject_id="subject_001",
+                frame_index=0,
+                timestamp_ms=0.0,
+                frame_delta_ms=None,
+                face_detected=True,
+                landmarks_valid=True,
+                ear_left=0.3,
+                ear_right=0.3,
+                ear_avg=0.3,
+                is_eye_closed=False,
+                blink_count=1,  # Invalid on frame 0
+                blink_duration_ms=0.0,
+                perclos=None,
+                fps=30.0,
+                label="ACTIVE",
+                label_id=0,
+            )
+
+        # Later frame (frame_index > 0) with non-zero blink_count is accepted by schema
+        sample_f1 = SampleRecord(
+            sample_id="session_001_f1",
+            session_id="session_001",
+            subject_id="subject_001",
+            frame_index=1,
+            timestamp_ms=33.3,
+            frame_delta_ms=33.3,
+            face_detected=True,
+            landmarks_valid=True,
+            ear_left=0.3,
+            ear_right=0.3,
+            ear_avg=0.3,
+            is_eye_closed=False,
+            blink_count=1,
+            blink_duration_ms=50.0,
+            perclos=None,
+            fps=30.0,
+            label="ACTIVE",
+            label_id=0,
+        )
+        assert sample_f1.blink_count == 1
+
+    def test_deserialization_rejects_non_zero_blink_count_on_frame_zero(self) -> None:
+        # from_json must reject invalid frame-0 records with non-zero blink count
+        raw_json = json.dumps({
+            "sample_id": "session_001_f0",
+            "session_id": "session_001",
+            "subject_id": "subject_001",
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "frame_delta_ms": None,
+            "face_detected": True,
+            "landmarks_valid": True,
+            "ear_left": 0.3,
+            "ear_right": 0.3,
+            "ear_avg": 0.3,
+            "is_eye_closed": False,
+            "blink_count": 5,  # Invalid on frame 0
+            "blink_duration_ms": 0.0,
+            "perclos": None,
+            "fps": 30.0,
+            "label": "ACTIVE",
+            "label_id": 0,
+        })
+        with pytest.raises(
+            ValueError,
+            match="First sample \\(frame_index=0\\) must have blink_count == 0, got 5",
+        ):
+            SampleRecord.from_json(raw_json)
 
 
 class TestSessionMetadataValidation:
