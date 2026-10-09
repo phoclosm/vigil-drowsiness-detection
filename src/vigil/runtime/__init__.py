@@ -27,6 +27,12 @@ from vigil.runtime.landmarks import (
     NormalizedLandmark,
     extract_eye_landmarks,
 )
+from vigil.runtime.eye_features import (
+    EyeAspectRatios,
+    EyeFeatureError,
+    calculate_eye_aspect_ratio,
+    calculate_eye_aspect_ratios,
+)
 
 __all__ = [
     "CapturedFrame",
@@ -52,4 +58,8 @@ __all__ = [
     "MediaPipeFaceLandmarkDetector",
     "NormalizedLandmark",
     "extract_eye_landmarks",
+    "EyeAspectRatios",
+    "EyeFeatureError",
+    "calculate_eye_aspect_ratio",
+    "calculate_eye_aspect_ratios",
 ]
