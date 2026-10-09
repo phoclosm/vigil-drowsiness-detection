@@ -570,6 +570,8 @@ class SampleRecord:
                 raise ValueError(f"fps must be finite or None, got {self.fps}.")
             if self.fps <= 0.0:
                 raise ValueError(f"fps must be positive, got {self.fps}.")
+            if self.fps > 120.0:
+                raise ValueError(f"fps must be <= 120.0, got {self.fps}.")
 
         # 11. Label consistency
         if not isinstance(self.label, str):

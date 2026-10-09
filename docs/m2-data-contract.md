@@ -54,7 +54,7 @@ The D2 data recorder must emit structured, tabular records. The schema is design
 | `sample_id` | `string` | — | Required | Unique string (`{session_id}_f{frame_index}`) | Globally unique sample identifier. | Cannot be null or empty. |
 | `session_id` | `string` | — | Required | Unique session slug (e.g., `s_20261006_1530_sub01`) | Identifies the continuous recording session. Critical for grouped splitting. | Cannot be null or empty. |
 | `subject_id` | `string` | — | Required | Anonymized identifier (e.g., `subject_001`) | Stable anonymized identifier for the recorded subject. Free of personally identifying information. | Must not be empty. |
-| `frame_index` | `int` | frames | Required | $[0, \infty)$ | Zero-indexed sequential frame counter within the session. Monotonically increasing. | Cannot be negative; cannot decrement. |
+| `frame_index` | `int` | frames | Required | $[0, \infty)$ | Zero-indexed frame counter within the session representing the source capture frame. Monotonically increasing; may contain gaps when frames are dropped or skipped by the capture pipeline. | Cannot be negative; cannot decrement or duplicate ($i_k > i_{k-1}$). First recorded frame must be 0. |
 | `timestamp_ms` | `float` | ms | Required | $[0.0, \infty)$ | Monotonic elapsed capture time from the beginning of the recording session ($t_0 = 0.0$). | Must be strictly increasing ($t_i > t_{i-1}$). Epoch time is stored in session metadata. |
 | `frame_delta_ms` | `float` | ms | Required for frame > 0 | $(0.0, \infty)$ | Time elapsed since previous captured frame ($t_i - t_{i-1}$). Positive measured deltas are preserved without clamping; large values represent stalls/gaps. | Must be `null` for frame 0 (no previous frame exists). |
 | `face_detected` | `bool` | — | Required | `True`, `False` | Flag indicating whether a human face was localized in the frame. | If `False`, all downstream facial features are invalid. |
@@ -63,7 +63,7 @@ The D2 data recorder must emit structured, tabular records. The schema is design
 | `ear_right` | `float` | ratio | Optional | $[0.0, 0.60]$ | Eye Aspect Ratio for the right eye calculated from canonical landmarks. | `null` / `NaN` if `landmarks_valid == False`. Must not be coerced to `0.0`. |
 | `ear_avg` | `float` | ratio | Optional | $[0.0, 0.60]$ | Mean Eye Aspect Ratio: $(ear_{left} + ear_{right}) / 2.0$. Primary instantaneous metric. | `null` / `NaN` if `landmarks_valid == False`. |
 | `is_eye_closed` | `bool` | — | Optional | `True`, `False` | Derived instantaneous indicator comparing `ear_avg` against the configured closure threshold. | `null` if `landmarks_valid == False`. Threshold version recorded in session metadata. |
-| `blink_count` | `int` | count | Required | $[0, \infty)$ | Cumulative completed blinks recorded in the current session up to this frame. | Starts at 0; monotonically non-decreasing. |
+| `blink_count` | `int` | count | Required | $[0, \infty)$ | Cumulative completed blinks recorded in the current session up to this frame. | Starts at 0 on frame 0; monotonically non-decreasing. |
 | `blink_duration_ms` | `float` | ms | Required | $[0.0, \infty)$ | Duration of the currently active or most recently completed eye closure event. | `0.0` if eyes are continuously open with no active closure. |
 | `perclos` | `float` | ratio | Optional | $[0.0, 1.0]$ | Percentage of Eye Closure over trailing temporal window. Trailing (causal) only. | `null` during initial warm-up buffer; $[0.0, 1.0]$ when valid. Window config recorded in metadata. |
 | `fps` | `float` | fps | Optional | $(0.0, 120.0]$ | Instantaneous or smoothed capture frame rate. | Informative metric; `null` if unmeasured. |
@@ -202,16 +202,17 @@ The following invariants are non-negotiable architectural constraints across all
 
 1. **Class Order Invariance**: Canonical class names and zero-indexed ordering (`0: ACTIVE`, `1: DROWSY`, `2: SLEEPING`) must never change, be reordered, or be partially omitted.
 2. **Session-Relative Monotonicity**: Timestamps (`timestamp_ms`) must measure elapsed milliseconds from session start ($t_0 = 0.0$) and be strictly monotonically increasing.
-3. **First-Frame Delta**: `frame_delta_ms` must evaluate to `null` for frame 0 and strictly $> 0.0$ for all subsequent frames.
-4. **Subject Identity and Generalization Semantics**:
+3. **First-Frame Semantics**: Frame 0 must have `frame_index = 0`, `timestamp_ms = 0.0`, `frame_delta_ms = null`, and `blink_count = 0`. For all subsequent frames, `frame_delta_ms` must be strictly $> 0.0$.
+4. **Frame Index Monotonicity and Gap Semantics**: `frame_index` must start at 0 for the first frame and strictly increase ($i_k > i_{k-1}$) for subsequent frames. Gaps (e.g., $0 \rightarrow 5$) are permitted to faithfully preserve dropped or skipped frames in upstream capture, but duplicate and backward frame indices are strictly prohibited.
+5. **Subject Identity and Generalization Semantics**:
    * Anonymized stable identifiers (`subject_001`, `subject_002`) must persist uncorrupted into dataset records.
    * Subject-level split = evaluation of cross-subject generalization.
    * Session-level split on a single subject = evaluation of session generalization only.
    * A single-subject dataset must never be described as demonstrating cross-subject generalization.
-5. **Ground Truth Independence**: Dataset labels represent verified observed human states from the recording protocol. Heuristic threshold rules and model predictions must never define or overwrite ground truth.
-6. **Zero Distinction**: A valid zero (eyes closed) must remain distinguishable from a missing signal (`landmarks_valid = False`). Missing values must never be stored as numeric zero.
-7. **Causal PERCLOS**: PERCLOS must remain a trailing (causal) measurement. Its definition must not silently vary across sessions within a dataset release.
-8. **Deterministic Preprocessing**: Preprocessing parameters (e.g., mean, variance, imputation constants) must be fit strictly on training partitions and frozen before evaluation.
+6. **Ground Truth Independence**: Dataset labels represent verified observed human states from the recording protocol. Heuristic threshold rules and model predictions must never define or overwrite ground truth.
+7. **Zero Distinction**: A valid zero (eyes closed) must remain distinguishable from a missing signal (`landmarks_valid = False`). Missing values must never be stored as numeric zero.
+8. **Causal PERCLOS**: PERCLOS must remain a trailing (causal) measurement. Its definition must not silently vary across sessions within a dataset release.
+9. **Deterministic Preprocessing**: Preprocessing parameters (e.g., mean, variance, imputation constants) must be fit strictly on training partitions and frozen before evaluation.
 
 ---
 

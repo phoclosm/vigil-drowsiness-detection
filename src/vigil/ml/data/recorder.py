@@ -149,8 +149,8 @@ class SessionRecorder:
             - Recorder must be open.
             - Sample must be a valid SampleRecord instance.
             - Sample session_id and subject_id must match session metadata.
-            - Frame 0 must have frame_index=0, timestamp_ms=0.0, and frame_delta_ms=None.
-            - Subsequent frames must have frame_index > previous frame_index.
+            - Frame 0 must have frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, and blink_count=0.
+            - Subsequent frames must have frame_index > previous frame_index (strictly increasing; gaps permitted for dropped/skipped frames).
             - Timestamps must be strictly monotonically increasing.
             - Frame deltas must match timestamp differences within floating-point tolerance.
             - Missing landmark features must be null, not 0.0.
@@ -195,11 +195,15 @@ class SessionRecorder:
                 raise ValueError(
                     f"First sample must have frame_delta_ms is None, got {sample.frame_delta_ms}."
                 )
+            if sample.blink_count != 0:
+                raise ValueError(
+                    f"First sample must have blink_count == 0, got {sample.blink_count}."
+                )
         else:
             # Subsequent samples in the session
             prev = self._prev_sample
 
-            # 1. Frame index monotonicity
+            # 1. Frame index monotonicity (gaps permitted for dropped/skipped frames)
             if sample.frame_index == prev.frame_index:
                 raise ValueError(
                     f"Duplicate frame_index {sample.frame_index} encountered."
