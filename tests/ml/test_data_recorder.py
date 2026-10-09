@@ -378,7 +378,9 @@ class TestSessionRecorder:
         ]
         assert list(data.keys()) == expected_keys
 
-    def test_first_sample_non_zero_blink_count_rejected(self, tmp_path: Path) -> None:
+    def test_first_sample_non_zero_blink_count_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         metadata = make_metadata()
         session_dir = tmp_path / metadata.session_id
 
@@ -386,18 +388,27 @@ class TestSessionRecorder:
             # 1. Direct construction of frame 0 with non-zero blink count is rejected by schema
             with pytest.raises(
                 ValueError,
-                match="First sample.*must have blink_count == 0, got 1",
-            ):
+                match=r"^First sample \(frame_index=0\) must have blink_count == 0, got 1\.$",
+            ) as exc_schema:
                 make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=1)
+            assert str(exc_schema.value) == "First sample (frame_index=0) must have blink_count == 0, got 1."
 
             # 2. Defense in depth: recorder.append() also rejects non-zero blink count on first sample
             s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=0)
             object.__setattr__(s0, "blink_count", 1)
+
+            # Temporarily bypass schema validation so execution reaches the recorder's own guard
+            monkeypatch.setattr(SampleRecord, "validate", lambda self: None)
+
             with pytest.raises(
                 ValueError,
-                match="First sample.*must have blink_count == 0, got 1",
-            ):
+                match=r"^First sample must have blink_count == 0, got 1\.$",
+            ) as exc_recorder:
                 recorder.append(s0)
+
+            # Assert recorder-specific error message exactly, distinguishing from schema-level error
+            assert str(exc_recorder.value) == "First sample must have blink_count == 0, got 1."
+            assert "(frame_index=0)" not in str(exc_recorder.value)
 
     def test_decreasing_blink_count_rejected(self, tmp_path: Path) -> None:
         metadata = make_metadata()
