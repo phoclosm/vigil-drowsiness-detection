@@ -383,10 +383,19 @@ class TestSessionRecorder:
         session_dir = tmp_path / metadata.session_id
 
         with SessionRecorder(session_dir=session_dir, metadata=metadata) as recorder:
-            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=1)
+            # 1. Direct construction of frame 0 with non-zero blink count is rejected by schema
             with pytest.raises(
                 ValueError,
-                match="First sample must have blink_count == 0, got 1",
+                match="First sample.*must have blink_count == 0, got 1",
+            ):
+                make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=1)
+
+            # 2. Defense in depth: recorder.append() also rejects non-zero blink count on first sample
+            s0 = make_sample(frame_index=0, timestamp_ms=0.0, frame_delta_ms=None, blink_count=0)
+            object.__setattr__(s0, "blink_count", 1)
+            with pytest.raises(
+                ValueError,
+                match="First sample.*must have blink_count == 0, got 1",
             ):
                 recorder.append(s0)
 

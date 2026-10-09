@@ -546,6 +546,10 @@ class SampleRecord:
             raise TypeError(f"blink_count must be an integer, got {type(self.blink_count).__name__}.")
         if self.blink_count < 0:
             raise ValueError(f"blink_count must be an integer >= 0, got {self.blink_count}.")
+        if self.frame_index == 0 and self.blink_count != 0:
+            raise ValueError(
+                f"First sample (frame_index=0) must have blink_count == 0, got {self.blink_count}."
+            )
         if not isinstance(self.blink_duration_ms, (int, float)) or isinstance(self.blink_duration_ms, bool):
             raise TypeError(f"blink_duration_ms must be numeric, got {type(self.blink_duration_ms)}.")
         if not math.isfinite(self.blink_duration_ms) or self.blink_duration_ms < 0.0:
