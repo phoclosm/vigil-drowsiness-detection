@@ -32,7 +32,10 @@ from vigil.runtime.eye_features import (
     BlinkTracker,
     BlinkTrackerConfig,
     EyeAspectRatios,
+    EyeFeatureFrame,
     EyeFeatureError,
+    EyeFeatureStream,
+    EyeFeatureStreamConfig,
     calculate_eye_aspect_ratio,
     calculate_eye_aspect_ratios,
 )
@@ -66,6 +69,9 @@ __all__ = [
     "BlinkState",
     "BlinkTracker",
     "BlinkTrackerConfig",
+    "EyeFeatureFrame",
+    "EyeFeatureStream",
+    "EyeFeatureStreamConfig",
     "calculate_eye_aspect_ratio",
     "calculate_eye_aspect_ratios",
 ]
