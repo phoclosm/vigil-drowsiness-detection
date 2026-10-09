@@ -27,6 +27,18 @@ from vigil.runtime.landmarks import (
     NormalizedLandmark,
     extract_eye_landmarks,
 )
+from vigil.runtime.eye_features import (
+    BlinkState,
+    BlinkTracker,
+    BlinkTrackerConfig,
+    EyeAspectRatios,
+    EyeFeatureFrame,
+    EyeFeatureError,
+    EyeFeatureStream,
+    EyeFeatureStreamConfig,
+    calculate_eye_aspect_ratio,
+    calculate_eye_aspect_ratios,
+)
 
 __all__ = [
     "CapturedFrame",
@@ -52,4 +64,14 @@ __all__ = [
     "MediaPipeFaceLandmarkDetector",
     "NormalizedLandmark",
     "extract_eye_landmarks",
+    "EyeAspectRatios",
+    "EyeFeatureError",
+    "BlinkState",
+    "BlinkTracker",
+    "BlinkTrackerConfig",
+    "EyeFeatureFrame",
+    "EyeFeatureStream",
+    "EyeFeatureStreamConfig",
+    "calculate_eye_aspect_ratio",
+    "calculate_eye_aspect_ratios",
 ]
