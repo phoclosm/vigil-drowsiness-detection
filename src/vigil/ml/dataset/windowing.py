@@ -35,6 +35,29 @@ class WindowSample:
     start_timestamp_ms: float
     end_timestamp_ms: float
 
+    def __post_init__(self) -> None:
+        """Validate locked window dimensions, finite values, and canonical target."""
+        if len(self.features) != 60:
+            raise ValueError(
+                f"WindowSample features must contain exactly 60 timesteps, got {len(self.features)}."
+            )
+        for t, row in enumerate(self.features):
+            if len(row) != 8:
+                raise ValueError(
+                    f"WindowSample features row {t} must contain exactly 8 channels, got {len(row)}."
+                )
+            for val in row:
+                if not math.isfinite(val):
+                    raise ValueError(f"Non-finite value {val} detected in WindowSample features row {t}.")
+        if self.target not in (
+            FatigueLabel.ACTIVE,
+            FatigueLabel.DROWSY,
+            FatigueLabel.SLEEPING,
+        ):
+            raise ValueError(
+                f"WindowSample target must be a canonical class (0: ACTIVE, 1: DROWSY, 2: SLEEPING), got {self.target}."
+            )
+
 
 def build_sample_feature_vector(
     sample: SampleRecord,
@@ -119,9 +142,18 @@ def extract_windows(
     if not records:
         return []
 
-    # Group records by session_id
+    # Group records by session_id while enforcing consistent subject_id per session
     session_groups: dict[str, list[SampleRecord]] = defaultdict(list)
+    session_to_subj: dict[str, str] = {}
     for r in records:
+        if r.session_id in session_to_subj:
+            if session_to_subj[r.session_id] != r.subject_id:
+                raise ValueError(
+                    f"Session '{r.session_id}' contains inconsistent subject IDs: "
+                    f"'{session_to_subj[r.session_id]}' vs '{r.subject_id}'."
+                )
+        else:
+            session_to_subj[r.session_id] = r.subject_id
         session_groups[r.session_id].append(r)
 
     extracted_windows: list[WindowSample] = []
@@ -134,6 +166,21 @@ def extract_windows(
             session_records,
             key=lambda r: (r.frame_index, r.timestamp_ms),
         )
+
+        # Validate temporal sequence integrity: no duplicate frame indices and monotonic timestamps
+        for i in range(1, len(sorted_records)):
+            prev_rec = sorted_records[i - 1]
+            curr_rec = sorted_records[i]
+            if curr_rec.frame_index == prev_rec.frame_index:
+                raise ValueError(
+                    f"Duplicate frame index {curr_rec.frame_index} detected in session '{session_id}'."
+                )
+            if curr_rec.timestamp_ms <= prev_rec.timestamp_ms:
+                raise ValueError(
+                    f"Non-monotonic timestamp detected in session '{session_id}': "
+                    f"frame {prev_rec.frame_index} ({prev_rec.timestamp_ms}ms) followed by "
+                    f"frame {curr_rec.frame_index} ({curr_rec.timestamp_ms}ms)."
+                )
 
         # Break session into continuous segments based on frame and timing gaps
         segments: list[list[SampleRecord]] = []

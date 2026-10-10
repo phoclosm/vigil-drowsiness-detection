@@ -6,11 +6,20 @@ import pytest
 import torch
 
 from vigil.ml.data.schema import SampleRecord
-from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, WindowConfig
+from vigil.ml.dataset.config import (
+    LOCKED_FEATURE_CHANNELS,
+    LOCKED_STRIDE,
+    LOCKED_WINDOW_LENGTH,
+    WindowConfig,
+)
 from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
 from vigil.ml.dataset.splitter import DatasetGroupSplitResult, split_records_by_group
-from vigil.ml.dataset.windowing import build_sample_feature_vector, extract_windows
+from vigil.ml.dataset.windowing import (
+    WindowSample,
+    build_sample_feature_vector,
+    extract_windows,
+)
 
 
 def make_sequence_sample(
@@ -328,3 +337,200 @@ class TestDatasetGroupSplitter:
         val_transformed = norm.normalize_continuous("ear_avg", val_records[0].ear_avg, is_valid=True)
         # (0.40 - 0.25) / 1.0 (std=1.0 for constant) = 0.15
         assert pytest.approx(val_transformed, rel=1e-3) == 0.15
+
+
+class TestTemporalDatasetIntegrityRegression:
+    """Regression tests for D4 hardening: session-subject consistency, sequence integrity, and locked contract."""
+
+    def test_mixed_subject_session_rejected_in_splitter(self) -> None:
+        """Reject splitting if a single session contains records from multiple subjects."""
+        rec1 = make_sequence_sample(0, session_id="session_X", subject_id="subject_A")
+        rec2 = make_sequence_sample(1, session_id="session_X", subject_id="subject_B")
+
+        with pytest.raises(ValueError, match="inconsistent subject IDs"):
+            split_records_by_group([rec1, rec2])
+
+    def test_mixed_subject_session_rejected_in_windowing(self) -> None:
+        """Reject window extraction if a single session contains records from multiple subjects."""
+        rec1 = make_sequence_sample(0, session_id="session_X", subject_id="subject_A")
+        rec2 = make_sequence_sample(1, session_id="session_X", subject_id="subject_B")
+
+        with pytest.raises(ValueError, match="inconsistent subject IDs"):
+            extract_windows([rec1, rec2])
+
+    def test_duplicate_frame_index_rejected(self) -> None:
+        """Reject temporal sequences containing duplicate frame indices within a session."""
+        rec1 = make_sequence_sample(10, session_id="session_1", timestamp_ms=300.0)
+        rec2 = make_sequence_sample(10, session_id="session_1", timestamp_ms=333.3)
+
+        with pytest.raises(ValueError, match="Duplicate frame index 10"):
+            extract_windows([rec1, rec2])
+
+    def test_timestamp_reversal_rejected(self) -> None:
+        """Reject temporal sequences where timestamps decrease when ordered by frame index."""
+        rec1 = make_sequence_sample(10, session_id="session_1", timestamp_ms=500.0)
+        rec2 = make_sequence_sample(11, session_id="session_1", timestamp_ms=450.0)
+
+        with pytest.raises(ValueError, match="Non-monotonic timestamp"):
+            extract_windows([rec1, rec2])
+
+    def test_timestamp_stagnant_rejected(self) -> None:
+        """Reject temporal sequences where timestamps remain identical across consecutive frames."""
+        rec1 = make_sequence_sample(10, session_id="session_1", timestamp_ms=500.0)
+        rec2 = make_sequence_sample(11, session_id="session_1", timestamp_ms=500.0)
+
+        with pytest.raises(ValueError, match="Non-monotonic timestamp"):
+            extract_windows([rec1, rec2])
+
+    def test_valid_frame_gap_and_timing_gap_preserved(self) -> None:
+        """Preserve valid frame-index gaps and timing-gap segmentation without error."""
+        # Segment 1: frames 0..65 -> yields (66-60)/15 + 1 = 1 window
+        # Gap: frame 65 (2164.5ms) to frame 70 (2800.0ms) -> frame gap 5 > 1 and time gap > 200ms
+        # Segment 2: frames 70..135 -> yields (66-60)/15 + 1 = 1 window
+        recs1 = [make_sequence_sample(i, timestamp_ms=float(i * 33.3)) for i in range(66)]
+        recs2 = [make_sequence_sample(i, timestamp_ms=float(2500.0 + (i - 70) * 33.3)) for i in range(70, 136)]
+
+        windows = extract_windows(recs1 + recs2)
+        assert len(windows) == 2
+        assert windows[0].start_frame_index == 0
+        assert windows[0].end_frame_index == 59
+        assert windows[1].start_frame_index == 70
+        assert windows[1].end_frame_index == 129
+
+    def test_locked_window_size_and_stride_enforced(self) -> None:
+        """Enforce locked window_length=60 and stride=15 in WindowConfig."""
+        assert LOCKED_WINDOW_LENGTH == 60
+        assert LOCKED_STRIDE == 15
+
+        cfg = WindowConfig()
+        assert cfg.window_length == 60
+        assert cfg.stride == 15
+
+        with pytest.raises(ValueError, match="locked to 60"):
+            WindowConfig(window_length=30)
+        with pytest.raises(ValueError, match="locked to 60"):
+            WindowConfig(window_length=120)
+
+        with pytest.raises(ValueError, match="locked to 15"):
+            WindowConfig(stride=5)
+        with pytest.raises(ValueError, match="locked to 15"):
+            WindowConfig(stride=30)
+
+    def test_invalid_split_ratio_rejected(self) -> None:
+        """Reject non-finite or out-of-range train_ratio values in split_records_by_group."""
+        recs = [make_sequence_sample(i) for i in range(10)]
+
+        with pytest.raises(ValueError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio=0.0)
+        with pytest.raises(ValueError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio=1.0)
+        with pytest.raises(ValueError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio=-0.25)
+        with pytest.raises(ValueError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio=1.25)
+        with pytest.raises(ValueError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio=float("nan"))
+        with pytest.raises(TypeError, match="train_ratio"):
+            split_records_by_group(recs, train_ratio="0.75")  # type: ignore[arg-type]
+
+    def test_malformed_window_sample_rejected(self) -> None:
+        """Validate timestep count, channel count, finite values, and canonical targets in WindowSample."""
+        valid_features = [[0.0] * 8 for _ in range(60)]
+
+        # Invalid timestep count (59 instead of 60)
+        with pytest.raises(ValueError, match="60 timesteps"):
+            WindowSample(
+                features=[[0.0] * 8 for _ in range(59)],
+                target=0,
+                subject_id="sub_1",
+                session_id="sess_1",
+                start_frame_index=0,
+                end_frame_index=58,
+                start_timestamp_ms=0.0,
+                end_timestamp_ms=1900.0,
+            )
+
+        # Invalid channel count (7 instead of 8)
+        with pytest.raises(ValueError, match="8 channels"):
+            WindowSample(
+                features=[[0.0] * 7 for _ in range(60)],
+                target=0,
+                subject_id="sub_1",
+                session_id="sess_1",
+                start_frame_index=0,
+                end_frame_index=59,
+                start_timestamp_ms=0.0,
+                end_timestamp_ms=1900.0,
+            )
+
+        # Non-finite value in features
+        nan_features = [[0.0] * 8 for _ in range(60)]
+        nan_features[10][2] = float("nan")
+        with pytest.raises(ValueError, match="Non-finite value"):
+            WindowSample(
+                features=nan_features,
+                target=0,
+                subject_id="sub_1",
+                session_id="sess_1",
+                start_frame_index=0,
+                end_frame_index=59,
+                start_timestamp_ms=0.0,
+                end_timestamp_ms=1900.0,
+            )
+
+        # Non-canonical target label (-1 or 99)
+        with pytest.raises(ValueError, match="canonical class"):
+            WindowSample(
+                features=valid_features,
+                target=-1,
+                subject_id="sub_1",
+                session_id="sess_1",
+                start_frame_index=0,
+                end_frame_index=59,
+                start_timestamp_ms=0.0,
+                end_timestamp_ms=1900.0,
+            )
+        with pytest.raises(ValueError, match="canonical class"):
+            WindowSample(
+                features=valid_features,
+                target=3,
+                subject_id="sub_1",
+                session_id="sess_1",
+                start_frame_index=0,
+                end_frame_index=59,
+                start_timestamp_ms=0.0,
+                end_timestamp_ms=1900.0,
+            )
+
+    def test_dataset_validates_windows_in_init_and_getitem(self) -> None:
+        """Validate that FatigueWindowDataset validates timestep count and canonical targets."""
+        valid_features = [[0.0] * 8 for _ in range(60)]
+        valid_w = WindowSample(
+            features=valid_features,
+            target=0,
+            subject_id="sub_1",
+            session_id="sess_1",
+            start_frame_index=0,
+            end_frame_index=59,
+            start_timestamp_ms=0.0,
+            end_timestamp_ms=1900.0,
+        )
+
+        ds = FatigueWindowDataset([valid_w])
+        features, target = ds[0]
+        assert features.shape == (60, 8)
+        assert target.item() == 0
+
+        # Artificially alter a window to test getitem guard
+        class CorruptedWindow:
+            def __init__(self, features: list[list[float]], target: int) -> None:
+                self.features = features
+                self.target = target
+
+        corrupt_target_window = CorruptedWindow(valid_features, 99)
+        with pytest.raises(ValueError, match="non-canonical target"):
+            FatigueWindowDataset([corrupt_target_window])  # type: ignore[list-item]
+
+        corrupt_steps_window = CorruptedWindow([[0.0] * 8 for _ in range(40)], 0)
+        with pytest.raises(ValueError, match="invalid timestep count"):
+            FatigueWindowDataset([corrupt_steps_window])  # type: ignore[list-item]

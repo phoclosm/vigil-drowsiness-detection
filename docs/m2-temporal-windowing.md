@@ -54,14 +54,23 @@ Every temporal window contains an exact 8-channel feature vector per timestep:
 1. **Strict Session & Subject Boundaries**:
    * Sliding windows **must never cross session or subject boundaries**.
    * Window generation operates strictly on continuous records within a single `session_id`.
-2. **Segmentation on Discontinuities**:
+   * **One Subject Per Session Invariant**: All records within a `session_id` must have the same `subject_id`. Mixed-subject sessions are rejected prior to splitting or windowing to prevent cross-partition session contamination.
+2. **Temporal Sequence Validation**:
+   * Records within each session are ordered strictly by `frame_index`.
+   * **Duplicate Frame Detection**: Any duplicate `frame_index` within a session triggers an immediate `ValueError`.
+   * **Monotonic Timestamps**: Timestamps must strictly increase with frame index. Non-monotonic or reversed timestamps are rejected.
+   * **Preservation of Valid Gaps**: Valid frame drops ($\Delta_{\text{frame}} > 1$) and capture pauses ($\Delta_t > 200.0\text{ ms}$) trigger clean segment cuts without error.
+3. **Segmentation on Discontinuities**:
    * Continuous segments are split whenever:
      * Frame index gap $\Delta_{\text{frame}} > 1$ (dropped frames), OR
      * Timestamp gap $\Delta_t > 200.0\text{ ms}$ (capture stalls or pauses).
    * Observations are **never invented or interpolated** across gaps.
    * If a segment has fewer than 60 samples, zero windows are extracted from that segment.
-3. **Ambiguous Label Exclusion**:
+4. **Ambiguous Label Exclusion**:
    * Any sliding window that overlaps an `AMBIGUOUS` annotation (`label_id = -1`) anywhere within its 60-frame span is **immediately discarded** from supervised training and evaluation sets.
+5. **Contract Enforcement**:
+   * `WindowConfig` enforces locked $W = 60$ and $S = 15$.
+   * `WindowSample` and `FatigueWindowDataset` validate exactly 60 timesteps, 8 feature channels, finite values, and canonical targets ($0, 1, 2$).
 
 ---
 
@@ -81,15 +90,17 @@ Feature normalization follows rigorous data hygiene to prevent forward data leak
 
 Data splitting is executed before window extraction via `split_records_by_group`:
 
-1. **Primary: Subject-Level Grouping (`subject_id`)**:
+1. **Split Ratio Invariant**:
+   * `train_ratio` must be a finite float strictly in $(0.0, 1.0)$. Out-of-bounds, infinite, or non-numeric ratios are rejected.
+2. **Primary: Subject-Level Grouping (`subject_id`)**:
    * When multiple subjects exist, all sessions for a given subject are assigned exclusively to either Training or Validation.
    * Prevents models from memorizing subject-specific facial features or eye morphology.
-2. **Fallback: Session-Level Grouping (`session_id`)**:
+3. **Fallback: Session-Level Grouping (`session_id`)**:
    * When only a single subject exists across the dataset, the system falls back to session-level grouping.
    * Cross-subject generalization cannot be claimed in single-subject datasets; this limitation is explicitly reported.
-3. **Forbidden Practices**:
+4. **Forbidden Practices**:
    * Random row-level or window-level splitting is strictly prohibited.
-4. **Insufficient Groups**:
+5. **Insufficient Groups**:
    * If only a single session exists, manufacturing a validation partition is rejected. The system reports that an independent evaluation partition is unavailable.
 
 ---
