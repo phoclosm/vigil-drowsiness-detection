@@ -39,6 +39,12 @@ from vigil.runtime.eye_features import (
     calculate_eye_aspect_ratio,
     calculate_eye_aspect_ratios,
 )
+from vigil.runtime.performance import (
+    FrameLatency,
+    PerformanceMeasurementError,
+    StageLatency,
+    StageLatencyRecorder,
+)
 
 __all__ = [
     "CapturedFrame",
@@ -74,4 +80,8 @@ __all__ = [
     "EyeFeatureStreamConfig",
     "calculate_eye_aspect_ratio",
     "calculate_eye_aspect_ratios",
+    "FrameLatency",
+    "PerformanceMeasurementError",
+    "StageLatency",
+    "StageLatencyRecorder",
 ]
