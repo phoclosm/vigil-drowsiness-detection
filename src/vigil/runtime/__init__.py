@@ -50,6 +50,13 @@ from vigil.runtime.performance import (
     StageLatencySummary,
     format_benchmark_result,
 )
+from vigil.runtime.preprocessing import (
+    EYE_FEATURE_STAGE_NAME,
+    FACE_LANDMARK_STAGE_NAME,
+    VisionPreprocessingError,
+    VisionPreprocessingResult,
+    VisionPreprocessor,
+)
 
 __all__ = [
     "CapturedFrame",
@@ -94,4 +101,9 @@ __all__ = [
     "StageLatencyRecorder",
     "StageLatencySummary",
     "format_benchmark_result",
+    "EYE_FEATURE_STAGE_NAME",
+    "FACE_LANDMARK_STAGE_NAME",
+    "VisionPreprocessingError",
+    "VisionPreprocessingResult",
+    "VisionPreprocessor",
 ]
