@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass
@@ -55,6 +56,11 @@ def split_records_by_group(
     Returns:
         A tuple of (train_records, val_records, split_result).
     """
+    if not isinstance(train_ratio, (int, float)) or isinstance(train_ratio, bool):
+        raise TypeError(f"train_ratio must be numeric, got {type(train_ratio).__name__}.")
+    if not math.isfinite(train_ratio) or train_ratio <= 0.0 or train_ratio >= 1.0:
+        raise ValueError(f"train_ratio must be a finite float in (0.0, 1.0), got {train_ratio}.")
+
     if not records:
         split_result = DatasetGroupSplitResult(
             train_sessions=[],
@@ -68,15 +74,23 @@ def split_records_by_group(
         )
         return ([], [], split_result)
 
-    # Index records by subject and session
+    # Index records by subject and session while validating session-subject consistency
     subj_to_sessions: dict[str, set[str]] = defaultdict(set)
     session_to_records: dict[str, list[SampleRecord]] = defaultdict(list)
     session_to_subj: dict[str, str] = {}
 
     for r in records:
+        if r.session_id in session_to_subj:
+            if session_to_subj[r.session_id] != r.subject_id:
+                raise ValueError(
+                    f"Session '{r.session_id}' contains inconsistent subject IDs: "
+                    f"'{session_to_subj[r.session_id]}' vs '{r.subject_id}'."
+                )
+        else:
+            session_to_subj[r.session_id] = r.subject_id
+
         subj_to_sessions[r.subject_id].add(r.session_id)
         session_to_records[r.session_id].append(r)
-        session_to_subj[r.session_id] = r.subject_id
 
     unique_subjects = sorted(subj_to_sessions.keys())
     unique_sessions = sorted(session_to_records.keys())
