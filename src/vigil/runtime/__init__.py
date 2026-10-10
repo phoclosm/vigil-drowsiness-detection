@@ -40,10 +40,15 @@ from vigil.runtime.eye_features import (
     calculate_eye_aspect_ratios,
 )
 from vigil.runtime.performance import (
+    CAPTURE_STAGE_NAME,
+    BenchmarkResult,
+    BenchmarkRunner,
     FrameLatency,
     PerformanceMeasurementError,
     StageLatency,
     StageLatencyRecorder,
+    StageLatencySummary,
+    format_benchmark_result,
 )
 
 __all__ = [
@@ -80,8 +85,13 @@ __all__ = [
     "EyeFeatureStreamConfig",
     "calculate_eye_aspect_ratio",
     "calculate_eye_aspect_ratios",
+    "CAPTURE_STAGE_NAME",
+    "BenchmarkResult",
+    "BenchmarkRunner",
     "FrameLatency",
     "PerformanceMeasurementError",
     "StageLatency",
     "StageLatencyRecorder",
+    "StageLatencySummary",
+    "format_benchmark_result",
 ]
