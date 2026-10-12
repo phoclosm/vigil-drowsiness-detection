@@ -643,3 +643,220 @@ class SampleRecord:
     def from_json(cls, json_str: str) -> SampleRecord:
         """Instantiate SampleRecord from JSON string."""
         return cls.from_dict(json.loads(json_str))
+
+
+# ---------------------------------------------------------------------------
+# Live Unlabeled Runtime Input
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LiveInputFrame:
+    """Unlabeled runtime-input frame supplied by M1 for live inference.
+
+    ``LiveInputFrame`` carries all session/frame timing metadata, ocular
+    features, and validity flags required by the M2 feature-vector builder,
+    but intentionally omits ``label``, ``label_id``, and ``subject_id`` which
+    are meaningless for unannotated live camera frames.
+
+    Validation rules mirror ``SampleRecord`` for every shared field, so the
+    existing ``build_sample_feature_vector`` and ``TemporalInferenceEngine``
+    code paths work without modification.  Missing ground-truth annotation is
+    **never** treated as invalid sensor data.
+
+    Fields
+    ------
+    session_id : str
+        Identifies the continuous live capture session.
+    frame_index : int
+        Zero-indexed monotonically increasing capture frame counter.
+    timestamp_ms : float
+        Monotonic elapsed milliseconds from the start of the capture session.
+    frame_delta_ms : float | None
+        Elapsed time since the previous frame (``None`` for ``frame_index=0``).
+    face_detected : bool
+        Whether a human face was localized in the frame.
+    landmarks_valid : bool
+        Whether eye landmark coordinates passed validity checks.
+    ear_left : float | None
+        Left Eye Aspect Ratio in ``[0.0, 0.60]``; ``None`` when landmarks are
+        invalid.
+    ear_right : float | None
+        Right Eye Aspect Ratio in ``[0.0, 0.60]``; ``None`` when landmarks are
+        invalid.
+    ear_avg : float | None
+        Mean Eye Aspect Ratio ``(ear_left + ear_right) / 2``; ``None`` when
+        landmarks are invalid.
+    is_eye_closed : bool | None
+        Derived instantaneous eye-closure flag; ``None`` when landmarks are
+        invalid.
+    blink_count : int
+        Cumulative completed blinks in the current session up to this frame.
+    blink_duration_ms : float
+        Duration of the active or most recently completed closure event.
+    perclos : float | None
+        Trailing PERCLOS ratio in ``[0.0, 1.0]``; ``None`` during warm-up.
+    fps : float | None
+        Instantaneous or smoothed capture frame rate; ``None`` if unmeasured.
+    """
+
+    session_id: str
+    frame_index: int
+    timestamp_ms: float
+    frame_delta_ms: float | None
+    face_detected: bool
+    landmarks_valid: bool
+    ear_left: float | None
+    ear_right: float | None
+    ear_avg: float | None
+    is_eye_closed: bool | None
+    blink_count: int
+    blink_duration_ms: float
+    perclos: float | None
+    fps: float | None
+
+    def __post_init__(self) -> None:
+        """Validate frame fields upon construction."""
+        self.validate()
+
+    def validate(self) -> None:
+        """Enforce structural invariants for a live unlabeled input frame.
+
+        Applies the same rules as ``SampleRecord`` for every shared field.
+        Missing ground-truth annotation is *not* checked here.
+        """
+        # 1. Session identifier
+        if not isinstance(self.session_id, str):
+            raise TypeError(f"session_id must be a string, got {type(self.session_id).__name__}.")
+        if not self.session_id.strip():
+            raise ValueError("session_id must be a non-empty string.")
+
+        # 2. Frame index
+        if not isinstance(self.frame_index, int) or isinstance(self.frame_index, bool):
+            raise TypeError(f"frame_index must be an integer, got {type(self.frame_index).__name__}.")
+        if self.frame_index < 0:
+            raise ValueError(f"frame_index must be >= 0, got {self.frame_index}.")
+
+        # 3. Timestamp
+        if not isinstance(self.timestamp_ms, (int, float)) or isinstance(self.timestamp_ms, bool):
+            raise TypeError(f"timestamp_ms must be numeric, got {type(self.timestamp_ms).__name__}.")
+        if not math.isfinite(self.timestamp_ms) or self.timestamp_ms < 0.0:
+            raise ValueError(f"timestamp_ms must be finite and >= 0.0, got {self.timestamp_ms}.")
+
+        # 4. Frame delta
+        if self.frame_index == 0:
+            if self.timestamp_ms != 0.0:
+                raise ValueError(
+                    f"First frame (frame_index=0) must have timestamp_ms == 0.0, got {self.timestamp_ms}."
+                )
+            if self.frame_delta_ms is not None:
+                raise ValueError(
+                    f"First frame (frame_index=0) must have frame_delta_ms is None, got {self.frame_delta_ms}."
+                )
+        else:
+            if self.frame_delta_ms is None:
+                raise ValueError(
+                    f"Frame at frame_index {self.frame_index} must have a positive frame_delta_ms, got None."
+                )
+            if not isinstance(self.frame_delta_ms, (int, float)) or isinstance(self.frame_delta_ms, bool):
+                raise TypeError(f"frame_delta_ms must be numeric, got {type(self.frame_delta_ms)}.")
+            if not math.isfinite(self.frame_delta_ms) or self.frame_delta_ms <= 0.0:
+                raise ValueError(
+                    f"frame_delta_ms must be finite and > 0.0 for frame_index > 0, got {self.frame_delta_ms}."
+                )
+
+        # 5. Face and landmark flags
+        if not isinstance(self.face_detected, bool):
+            raise TypeError(
+                f"face_detected must be an actual boolean, got {type(self.face_detected).__name__}."
+            )
+        if not isinstance(self.landmarks_valid, bool):
+            raise TypeError(
+                f"landmarks_valid must be an actual boolean, got {type(self.landmarks_valid).__name__}."
+            )
+        if self.landmarks_valid and not self.face_detected:
+            raise ValueError(
+                "Logical inconsistency: landmarks_valid cannot be True when face_detected is False."
+            )
+
+        # 6. Missing-feature invariants (mirrors SampleRecord)
+        if not self.landmarks_valid:
+            for fname, fval in [
+                ("ear_left", self.ear_left),
+                ("ear_right", self.ear_right),
+                ("ear_avg", self.ear_avg),
+                ("is_eye_closed", self.is_eye_closed),
+            ]:
+                if fval is not None:
+                    raise ValueError(
+                        f"{fname} must be None when landmarks_valid is False, got {fval}."
+                    )
+        else:
+            for ear_name, ear_val in [
+                ("ear_left", self.ear_left),
+                ("ear_right", self.ear_right),
+                ("ear_avg", self.ear_avg),
+            ]:
+                if ear_val is not None:
+                    if not isinstance(ear_val, (int, float)) or isinstance(ear_val, bool):
+                        raise TypeError(
+                            f"{ear_name} must be numeric or None, got {type(ear_val).__name__}."
+                        )
+                    if not math.isfinite(ear_val):
+                        raise ValueError(f"{ear_name} must be finite or None, got {ear_val}.")
+                    if ear_val < 0.0 or ear_val > 0.60:
+                        raise ValueError(f"{ear_name} must be within [0.0, 0.60], got {ear_val}.")
+
+            if (
+                self.ear_left is not None
+                and self.ear_right is not None
+                and self.ear_avg is not None
+            ):
+                expected_avg = (self.ear_left + self.ear_right) / 2.0
+                if not math.isclose(self.ear_avg, expected_avg, abs_tol=1e-3):
+                    raise ValueError(
+                        f"Inconsistent ear_avg: got {self.ear_avg}, but expected "
+                        f"({self.ear_left} + {self.ear_right}) / 2.0 = {expected_avg:.4f} "
+                        f"(tolerance 1e-3)."
+                    )
+
+            if self.is_eye_closed is not None and not isinstance(self.is_eye_closed, bool):
+                raise TypeError(
+                    f"is_eye_closed must be a boolean or None, got {type(self.is_eye_closed).__name__}."
+                )
+
+        # 7. Blink features
+        if not isinstance(self.blink_count, int) or isinstance(self.blink_count, bool):
+            raise TypeError(f"blink_count must be an integer, got {type(self.blink_count).__name__}.")
+        if self.blink_count < 0:
+            raise ValueError(f"blink_count must be an integer >= 0, got {self.blink_count}.")
+        if self.frame_index == 0 and self.blink_count != 0:
+            raise ValueError(
+                f"First frame (frame_index=0) must have blink_count == 0, got {self.blink_count}."
+            )
+        if not isinstance(self.blink_duration_ms, (int, float)) or isinstance(self.blink_duration_ms, bool):
+            raise TypeError(f"blink_duration_ms must be numeric, got {type(self.blink_duration_ms)}.")
+        if not math.isfinite(self.blink_duration_ms) or self.blink_duration_ms < 0.0:
+            raise ValueError(
+                f"blink_duration_ms must be finite and >= 0.0, got {self.blink_duration_ms}."
+            )
+
+        # 8. PERCLOS
+        if self.perclos is not None:
+            if not isinstance(self.perclos, (int, float)) or isinstance(self.perclos, bool):
+                raise TypeError(f"perclos must be numeric or None, got {type(self.perclos).__name__}.")
+            if not math.isfinite(self.perclos):
+                raise ValueError(f"perclos must be finite or None, got {self.perclos}.")
+            if not (0.0 <= self.perclos <= 1.0):
+                raise ValueError(f"perclos must be within [0.0, 1.0], got {self.perclos}.")
+
+        # 9. FPS
+        if self.fps is not None:
+            if not isinstance(self.fps, (int, float)) or isinstance(self.fps, bool):
+                raise TypeError(f"fps must be numeric or None, got {type(self.fps).__name__}.")
+            if not math.isfinite(self.fps):
+                raise ValueError(f"fps must be finite or None, got {self.fps}.")
+            if self.fps <= 0.0:
+                raise ValueError(f"fps must be positive, got {self.fps}.")
+            if self.fps > 120.0:
+                raise ValueError(f"fps must be <= 120.0, got {self.fps}.")

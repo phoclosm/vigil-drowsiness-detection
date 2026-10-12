@@ -6,7 +6,7 @@ This document specifies the artifact export bundle format, stateful streaming ru
 
 M2 D6 bridges offline temporal model training with production runtime readiness by delivering:
 1. **Self-Contained Model Bundles**: Versioned `.pt` checkpoints encapsulating the trained GRU weights, architecture configuration, fitted `FeatureNormalizer` state, window configuration ($W=60, S=15$), and canonical class mappings.
-2. **Stateful Streaming Inference (`TemporalInferenceEngine`)**: A real-time rolling-window inference component consuming M1 `SampleRecord` objects, respecting warm-up and stride intervals, and enforcing temporal discontinuity resets.
+2. **Stateful Streaming Inference (`TemporalInferenceEngine`)**: A real-time rolling-window inference component consuming M1 `SampleRecord` or `LiveInputFrame` objects, respecting warm-up and stride intervals, enforcing temporal discontinuity resets, and emitting contract-conforming `InferenceResult` payloads on every step.
 3. **Reproducible Baseline Comparison (`compare_models`)**: A leakage-safe evaluation pipeline benchmarking the learned GRU sequence classifier against the D3 heuristic rule baseline across matched window endpoints and full frame sequences.
 
 ---
@@ -120,7 +120,13 @@ During `load_model_bundle`, the following validations occur:
 
 The streaming engine is implemented in `src/vigil/ml/inference/engine.py`.
 
-`TemporalInferenceEngine` accepts frame-by-frame M1 `SampleRecord` instances in live capture order and emits structured `RuntimeInferenceResult` predictions.
+`TemporalInferenceEngine` accepts frame-by-frame M1 input in live capture order and emits structured `InferenceResult` predictions conforming to the published M2→M1 data contract.
+
+It accepts two input types:
+- **`SampleRecord`** — labelled training/test records (offline evaluation, `compare_models`).
+- **`LiveInputFrame`** — unlabelled live camera frames (M1 production inference).
+
+Missing ground-truth annotation on a `LiveInputFrame` is **never** treated as invalid sensor data.
 
 ### 3.1 Streaming Contracts and Mechanics
 
@@ -139,7 +145,7 @@ stateDiagram-v2
     Resetting --> WarmingUp: Buffer cleared (size=1)
 ```
 
-1. **Schema Validation**: Every incoming record is validated against `SampleRecord.validate()`. Invalid or malformed records fail immediately.
+1. **Schema Validation**: Every incoming `SampleRecord` or `LiveInputFrame` is validated against its strict schema. Structurally invalid inputs return `STATUS_INVALID_INPUT` with no prediction.
 2. **Buffer Bounding**: An internal `deque(maxlen=60)` retains at most 60 timesteps.
 3. **Warm-Up Phase**:
    - Frames 0 to 58 (first 59 samples): No prediction is emitted (`has_prediction=False`, `reason="buffer_warming_up"`).
@@ -159,24 +165,90 @@ stateDiagram-v2
 8. **Missing Features & Landmark Imputation**:
    - Frames with missing landmarks (`landmarks_valid=False`) or missing continuous ocular metrics are imputed deterministically using the fitted `FeatureNormalizer` (`imputed_value = 0.0`), with validity masks set to `0.0`. The engine continues streaming without crashing.
 
-### 3.2 Output Schema: `RuntimeInferenceResult`
+### 3.2 Unlabeled Live-Inference Input: `LiveInputFrame`
 
-Each call to `engine.step(sample)` (or `engine.process_sample(sample)`) returns an immutable `RuntimeInferenceResult`:
+For unannotated live camera frames (no ground-truth label), M1 must supply a `LiveInputFrame` instead of a `SampleRecord`.
+
+```python
+from vigil.ml.data.schema import LiveInputFrame
+
+frame = LiveInputFrame(
+    session_id="live_session_001",
+    frame_index=42,
+    timestamp_ms=1400.0,
+    frame_delta_ms=33.3,
+    face_detected=True,
+    landmarks_valid=True,
+    ear_left=0.28,
+    ear_right=0.30,
+    ear_avg=0.29,           # must equal (ear_left + ear_right) / 2 ± 1e-3
+    is_eye_closed=False,
+    blink_count=2,
+    blink_duration_ms=0.0,
+    perclos=0.05,
+    fps=30.0,
+)
+```
+
+**Ownership boundary:** `LiveInputFrame` is owned by M2. M1 is the exclusive caller; it must never fabricate `label`, `label_id`, or `subject_id` on live frames.
+
+**Validation rules** mirror `SampleRecord` for every shared field:
+- EAR fields: `[0.0, 0.60]`, consistency check `|ear_avg - (ear_left + ear_right) / 2| ≤ 1e-3`
+- `frame_index=0` requires `blink_count=0`, `timestamp_ms=0.0`, `frame_delta_ms=None`
+- FPS: `(0.0, 120.0]`
+- Missing landmarks require all ocular fields to be `None`
+
+### 3.3 Output Schema: `InferenceResult`
+
+Each call to `engine.step(frame)` (or `engine.process_sample(frame)`) returns an immutable `InferenceResult`. Every response — including warm-up, stride-skip, and discontinuity responses — contains **all six required contract fields**.
+
+#### 3.3.1 Required Contract Fields
 
 | Field | Type | Description |
 |---|---|---|
-| `has_prediction` | `bool` | `True` when a forward model prediction occurred; `False` when warming up or skipping stride. |
-| `label` | `str \| None` | Predicted canonical class (`'ACTIVE'`, `'DROWSY'`, `'SLEEPING'`) if predicted, else `None`. |
-| `label_id` | `int \| None` | Predicted class integer (`0`, `1`, `2`) if predicted, else `None`. |
-| `probabilities` | `dict[str, float] \| None` | Softmax probability distribution across all 3 canonical classes. |
-| `confidence` | `float \| None` | Maximum predicted class probability ($P(\hat{y} \mid X)$). |
-| `reason` | `str` | Explanatory status code: `'predicted'`, `'buffer_warming_up'`, `'stride_skip'`, `'session_reset'`, `'discontinuity_frame_gap'`, `'discontinuity_timing_gap'`. |
-| `session_id` | `str` | Identifier of the active recording session. |
-| `buffer_size` | `int` | Number of samples currently held in the rolling buffer ($1 \le N \le 60$). |
-| `start_frame_index` | `int` | Frame index of the oldest sample in the active window. |
-| `end_frame_index` | `int` | Frame index of the newest sample in the active window. |
-| `start_timestamp_ms` | `float` | Timestamp of the oldest sample in the active window. |
-| `end_timestamp_ms` | `float` | Timestamp of the newest sample in the active window. |
+| `predicted_class` | `str \| None` | Top-1 predicted class (`'ACTIVE'`, `'DROWSY'`, `'SLEEPING'`) when `status == STATUS_OK`; `None` otherwise. |
+| `class_id` | `int \| None` | Canonical class index (`0`, `1`, `2`) when `status == STATUS_OK`; `None` otherwise. |
+| `probabilities` | `dict[str, float] \| None` | Softmax probability distribution across all 3 canonical classes when `status == STATUS_OK`; `None` otherwise. |
+| `confidence` | `float \| None` | Max predicted class probability (`max(probabilities)`) when `status == STATUS_OK`; `None` otherwise. |
+| `status` | `str` | One of the published status codes (see §3.3.2). Always present. |
+| `latency_ms` | `float` | Wall-clock time for feature preprocessing and neural inference, in milliseconds. Measured from just before feature extraction to just after `torch.softmax` returns. Zero for non-prediction steps. Always finite and ≥ 0. |
+
+#### 3.3.2 Published Status Codes
+
+| Constant | Value | When emitted |
+|---|---|---|
+| `STATUS_OK` | `'STATUS_OK'` | Inference succeeded; valid prediction and probabilities produced. |
+| `STATUS_INSUFFICIENT_HISTORY` | `'STATUS_INSUFFICIENT_HISTORY'` | Buffer is filling, between stride steps, or rebuilding after a session change or temporal discontinuity. |
+| `STATUS_INVALID_INPUT` | `'STATUS_INVALID_INPUT'` | Frame is structurally invalid or the feature window is unusable. |
+| `STATUS_ERROR` | `'STATUS_ERROR'` | Internal inference failure; no prediction produced. |
+
+```python
+from vigil.ml.inference import STATUS_OK, STATUS_INSUFFICIENT_HISTORY, STATUS_INVALID_INPUT, STATUS_ERROR
+```
+
+#### 3.3.3 Diagnostic Fields (supplemental)
+
+| Field | Type | Description |
+|---|---|---|
+| `reason` | `str` | Internal status code: `'predicted'`, `'buffer_warming_up'`, `'stride_skip'`, `'session_reset'`, `'discontinuity_frame_gap'`, `'discontinuity_timing_gap'`, `'invalid_input'`, `'inference_error'`. |
+| `session_id` | `str \| None` | Active session identifier. |
+| `buffer_size` | `int` | Samples currently in the rolling buffer ($1 \le N \le 60$). |
+| `start_frame_index` | `int \| None` | Frame index of the oldest sample in the active window. |
+| `end_frame_index` | `int \| None` | Frame index of the newest sample in the active window. |
+| `start_timestamp_ms` | `float \| None` | Timestamp of the oldest frame in the active window. |
+| `end_timestamp_ms` | `float \| None` | Timestamp of the newest frame in the active window. |
+
+#### 3.3.4 Backward-Compatibility Aliases
+
+Sites that previously consumed `RuntimeInferenceResult` can use the following aliases without breaking:
+
+| Old field | Maps to |
+|---|---|
+| `has_prediction` | `status == STATUS_OK` |
+| `label` | `predicted_class` |
+| `label_id` | `class_id` |
+
+`RuntimeInferenceResult` is retained as an import alias for `InferenceResult`.
 
 ---
 
