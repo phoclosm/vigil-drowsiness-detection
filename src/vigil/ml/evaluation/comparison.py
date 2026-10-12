@@ -16,7 +16,6 @@ from vigil.ml.baseline.evaluation import (
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
-from vigil.ml.dataset.splitter import DatasetGroupSplitResult
 from vigil.ml.dataset.windowing import extract_windows
 from vigil.ml.models.export import LoadedModelBundle, load_model_bundle
 from vigil.ml.models.gru import GRUTemporalClassifier
@@ -34,6 +33,25 @@ except ImportError:  # pragma: no cover
 
 
 @dataclass(frozen=True)
+class IndependentEvaluationMetadata:
+    """Metadata describing direct evaluation of an independent record set."""
+
+    development_strategy: str
+    evaluation_subjects: list[str]
+    evaluation_sessions: list[str]
+    secondary_split_performed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert independent-evaluation metadata to a dictionary."""
+        return {
+            "development_strategy": self.development_strategy,
+            "evaluation_subjects": self.evaluation_subjects,
+            "evaluation_sessions": self.evaluation_sessions,
+            "secondary_split_performed": self.secondary_split_performed,
+        }
+
+
+@dataclass(frozen=True)
 class ModelComparisonReport:
     """Comparative evaluation report contrasting the learned GRU model and D3 rule baseline.
 
@@ -41,7 +59,7 @@ class ModelComparisonReport:
         gru_report: Evaluation metrics of the learned GRU sequence classifier on held-out windows.
         baseline_matched_report: Evaluation metrics of the D3 rule baseline on the identical window endpoint samples.
         baseline_full_report: Frame-by-frame evaluation metrics of the D3 rule baseline across all non-ambiguous samples.
-        split_result: Metadata describing the subject/session grouped split.
+        evaluation_metadata: Metadata distinguishing model development from direct evaluation.
         window_count: Number of evaluation windows evaluated.
         is_synthetic: Whether the evaluation was executed on synthetic test fixtures.
     """
@@ -49,7 +67,7 @@ class ModelComparisonReport:
     gru_report: BaselineEvaluationReport
     baseline_matched_report: BaselineEvaluationReport
     baseline_full_report: BaselineEvaluationReport
-    split_result: DatasetGroupSplitResult
+    evaluation_metadata: IndependentEvaluationMetadata
     window_count: int
     is_synthetic: bool = False
 
@@ -61,14 +79,7 @@ class ModelComparisonReport:
             "gru_model": self.gru_report.to_dict(),
             "rule_baseline_matched": self.baseline_matched_report.to_dict(),
             "rule_baseline_full": self.baseline_full_report.to_dict(),
-            "split_result": {
-                "strategy": self.split_result.strategy,
-                "train_subjects": self.split_result.train_subjects,
-                "val_subjects": self.split_result.val_subjects,
-                "train_sessions": self.split_result.train_sessions,
-                "val_sessions": self.split_result.val_sessions,
-                "limitation_note": self.split_result.limitation_note,
-            },
+            "evaluation_metadata": self.evaluation_metadata.to_dict(),
         }
 
     def to_markdown(self) -> str:
@@ -91,10 +102,11 @@ class ModelComparisonReport:
             ])
 
         lines.extend([
-            f"- **Evaluation Partition Strategy**: `{self.split_result.strategy}`",
+            f"- **Model-Development Split Strategy**: `{self.evaluation_metadata.development_strategy}`",
+            f"- **Independent Evaluation Subjects**: {self.evaluation_metadata.evaluation_subjects}",
+            f"- **Independent Evaluation Sessions**: {self.evaluation_metadata.evaluation_sessions}",
+            "- **Secondary Train/Validation Split**: No",
             f"- **Evaluated Windows ($W=60$)**: {self.window_count}",
-            f"- **Validation Sessions**: {self.split_result.val_sessions}",
-            f"- **Validation Subjects**: {self.split_result.val_subjects}",
             "",
             "#### Head-to-Head Performance Comparison",
             "| Metric | Learned GRU (Windows) | Rule Baseline (Matched Timesteps) | Rule Baseline (All Frames) |",
@@ -120,13 +132,6 @@ class ModelComparisonReport:
             f"| **DROWSY (1)** | {self.baseline_matched_report.confusion_matrix[1][0]} | {self.baseline_matched_report.confusion_matrix[1][1]} | {self.baseline_matched_report.confusion_matrix[1][2]} |",
             f"| **SLEEPING (2)** | {self.baseline_matched_report.confusion_matrix[2][0]} | {self.baseline_matched_report.confusion_matrix[2][1]} | {self.baseline_matched_report.confusion_matrix[2][2]} |",
         ])
-
-        if self.split_result.limitation_note:
-            lines.extend([
-                "",
-                "> [!WARNING]",
-                f"> **Partitioning Limitation**: {self.split_result.limitation_note}",
-            ])
 
         return "\n".join(lines)
 
@@ -245,27 +250,17 @@ def compare_models(
     )
 
     baseline_full_report = evaluate_baseline(records, baseline_classifier)
-    evaluation_subjects = sorted({record.subject_id for record in records})
-    evaluation_sessions = sorted({record.session_id for record in records})
-    split_result = DatasetGroupSplitResult(
-        train_sessions=[],
-        val_sessions=evaluation_sessions,
-        train_subjects=[],
-        val_subjects=evaluation_subjects,
-        strategy=validated_provenance["strategy"],
-        subject_count=len(evaluation_subjects),
-        session_count=len(evaluation_sessions),
-        limitation_note=(
-            "Records were supplied as an independent evaluation set; no secondary "
-            "train/validation split was performed."
-        ),
+    evaluation_metadata = IndependentEvaluationMetadata(
+        development_strategy=validated_provenance["strategy"],
+        evaluation_subjects=sorted({record.subject_id for record in records}),
+        evaluation_sessions=sorted({record.session_id for record in records}),
     )
 
     return ModelComparisonReport(
         gru_report=gru_report,
         baseline_matched_report=baseline_matched_report,
         baseline_full_report=baseline_full_report,
-        split_result=split_result,
+        evaluation_metadata=evaluation_metadata,
         window_count=len(evaluation_windows),
         is_synthetic=is_synthetic,
     )
@@ -291,8 +286,11 @@ def evaluate_recording_directory(
     if not dir_path.exists():
         return None
 
-    # Search for jsonl session files
-    sample_files = list(dir_path.glob("**/samples.jsonl")) + list(dir_path.glob("*.jsonl"))
+    # Collect root-level and nested recordings once, in deterministic order.
+    sample_files = sorted(
+        set(dir_path.glob("*.jsonl")) | set(dir_path.glob("**/samples.jsonl")),
+        key=lambda path: path.as_posix(),
+    )
     if not sample_files:
         return None
 

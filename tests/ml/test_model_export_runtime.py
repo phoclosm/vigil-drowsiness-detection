@@ -1113,6 +1113,12 @@ class TestModelComparison:
         assert "gru_model" in data
         assert "rule_baseline_matched" in data
         assert "rule_baseline_full" in data
+        assert data["evaluation_metadata"] == {
+            "development_strategy": "subject",
+            "evaluation_subjects": ["subj_01", "subj_02", "subj_03"],
+            "evaluation_sessions": ["sess_01", "sess_02", "sess_03"],
+            "secondary_split_performed": False,
+        }
 
         # Verify markdown formatting
         md = report.to_markdown()
@@ -1198,7 +1204,10 @@ class TestModelComparison:
         )
         assert report.window_count > 0
         assert report.baseline_full_report.total_samples == 80
-        assert report.split_result.limitation_note is not None
+        assert report.evaluation_metadata.development_strategy == "session"
+        assert report.evaluation_metadata.evaluation_subjects == ["subject_001"]
+        assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
+        assert not report.evaluation_metadata.secondary_split_performed
 
     def test_session_strategy_rejects_development_session_overlap(self) -> None:
         """Session fallback rejects evaluation sessions used in model development."""
@@ -1276,6 +1285,40 @@ class TestModelComparison:
 
         with pytest.raises(ValueError, match="A trained model bundle is required"):
             evaluate_recording_directory(tmp_path, bundle_path=None)
+
+    def test_evaluate_recording_directory_loads_root_file_once(self, tmp_path: Path) -> None:
+        """Root-level samples.jsonl is discovered once, not once per glob pattern."""
+        model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
+        model.training_provenance = {  # type: ignore[attr-defined]
+            "strategy": "subject",
+            "train_subjects": ["subject_train"],
+            "val_subjects": ["subject_val"],
+            "train_sessions": ["session_train"],
+            "val_sessions": ["session_val"],
+        }
+        bundle_path = tmp_path / "bundle.pt"
+        export_model_bundle(model, create_fitted_normalizer(), bundle_path)
+
+        recording_path = tmp_path / "samples.jsonl"
+        recording_path.write_text(
+            "".join(
+                make_test_sample(
+                    frame_index=i,
+                    session_id="held_out_session",
+                    subject_id="subject_held_out",
+                ).to_json() + "\n"
+                for i in range(80)
+            ),
+            encoding="utf-8",
+        )
+
+        report = evaluate_recording_directory(tmp_path, bundle_path=bundle_path)
+
+        assert report is not None
+        assert report.window_count > 0
+        assert report.baseline_full_report.total_samples == 80
+        assert report.evaluation_metadata.evaluation_subjects == ["subject_held_out"]
+        assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
 
 
 # ==============================================================================
