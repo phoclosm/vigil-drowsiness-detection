@@ -67,7 +67,9 @@ An exported model bundle is a self-contained PyTorch serialization dictionary co
         "training_provenance": {
             "strategy": "subject",
             "train_subjects": ["subject_001"],
-            "train_sessions": ["session_001"]
+            "val_subjects": ["subject_002"],
+            "train_sessions": ["session_001"],
+            "val_sessions": ["session_002"]
         },
     },
 }
@@ -286,14 +288,14 @@ print(report.to_markdown())
 
 ### 4.2 Data Leakage Prevention Guarantees
 
-1. **Training Provenance Required**: `compare_models` requires the supplied model's `TrainingResult` provenance (persisted on trained models and exported bundles) or an explicit `training_provenance` argument. Missing provenance fails rather than silently treating an internal split as independent.
-2. **Group-Disjoint Evaluation**: Every evaluation record must have a `subject_id` and `session_id` disjoint from the recorded training groups. Overlaps fail before window extraction.
-3. **Pre-Window Grouped Splitting**: Records are partitioned into train and validation sets by `subject_id` (with fallback to `session_id`) **before** any window extraction occurs; this internal split does not replace provenance verification.
+1. **Training Provenance Required**: `compare_models` requires the supplied model's `TrainingResult` provenance (persisted on trained models and exported bundles) or an explicit `training_provenance` argument. The schema explicitly records `strategy`, `train_subjects`, `val_subjects`, `train_sessions`, and `val_sessions`; malformed or incomplete provenance fails before evaluation.
+2. **Development-Group Isolation**: Validation groups are model-development data because validation loss selects the checkpoint. With `strategy="subject"`, evaluation subjects and sessions must be disjoint from both training and validation groups. With `strategy="session"`, the same subject may be evaluated in a new session, but every evaluation session must be disjoint from both development partitions.
+3. **Independent Evaluation Is Not Re-Split**: After group checks, `compare_models` extracts and evaluates every eligible window in the supplied independent dataset. It does not create a second train/validation split. The D3 baseline is evaluated on all supplied eligible frames and on matching window endpoints.
 4. **Train-Only Normalization**: The `FeatureNormalizer` is fitted strictly on the training partition used to produce the model.
 5. **Dual Baseline Benchmarking**:
    - **Matched Window Endpoints**: Evaluates the D3 rule baseline on the exact final-timestep frame ($t = 59$) of each valid 60-frame evaluation window. This yields a direct 1-to-1 comparison on identical decision events.
-   - **Full Partition Evaluation**: Evaluates the D3 rule baseline frame-by-frame across all eligible validation records.
-4. **Metrics**:
+   - **Full Evaluation Set**: Evaluates the D3 rule baseline frame-by-frame across all eligible supplied evaluation records.
+6. **Metrics**:
    - Overall Accuracy (on evaluated/covered samples)
    - Macro-averaged Precision, Recall, and F1 score
    - Prediction Coverage and Skipped/Abstained prediction tracking

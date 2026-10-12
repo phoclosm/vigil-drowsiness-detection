@@ -16,10 +16,14 @@ from vigil.ml.baseline.evaluation import (
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
-from vigil.ml.dataset.splitter import DatasetGroupSplitResult, split_records_by_group
+from vigil.ml.dataset.splitter import DatasetGroupSplitResult
 from vigil.ml.dataset.windowing import extract_windows
 from vigil.ml.models.export import LoadedModelBundle, load_model_bundle
 from vigil.ml.models.gru import GRUTemporalClassifier
+from vigil.ml.provenance import (
+    validate_evaluation_group_separation,
+    validate_training_provenance,
+)
 
 try:
     import torch
@@ -137,11 +141,11 @@ def compare_models(
     is_synthetic: bool = False,
     training_provenance: dict[str, Any] | None = None,
 ) -> ModelComparisonReport:
-    """Compare learned GRU sequence classifier and D3 rule baseline on held-out records.
+    """Compare a learned GRU and D3 rule baseline on an independent evaluation set.
 
     Data Hygiene:
-        - Partition records by subject-first/session-fallback grouping before windowing.
-        - Evaluate both models strictly on the held-out validation/test partition.
+        - Verify explicit model-development provenance before windowing.
+        - Evaluate all eligible windows from the supplied independent records.
         - Evaluate the rule baseline both on all eligible frames and matched to exact window endpoints.
 
     Args:
@@ -149,8 +153,8 @@ def compare_models(
         model: Trained GRUTemporalClassifier instance.
         normalizer: Fitted FeatureNormalizer instance.
         baseline_classifier: Optional RuleBasedBaseline (default uses standard thresholds).
-        train_ratio: Grouped split proportion (default 0.75).
-        seed: Deterministic seed (default 42).
+        train_ratio: Retained for API compatibility; independent records are not split.
+        seed: Retained for API compatibility; independent records are not split.
         is_synthetic: Flag indicating whether records are synthetic test fixtures.
         training_provenance: Group identities used to train the supplied model.
 
@@ -170,59 +174,38 @@ def compare_models(
     if not normalizer.is_fitted:
         raise ValueError("FeatureNormalizer must be fitted prior to model comparison.")
 
-    provenance = training_provenance or getattr(model, "training_provenance", None)
-    if not isinstance(provenance, dict):
+    provenance = training_provenance
+    if provenance is None:
+        provenance = getattr(model, "training_provenance", None)
+    if provenance is None:
         raise TypeError(
             "Training provenance is required for independent evaluation. "
             "Pass training_provenance or evaluate a model produced by train_temporal_classifier."
         )
-    train_subjects = set(provenance.get("train_subjects", []))
-    train_sessions = set(provenance.get("train_sessions", []))
-    if not train_subjects and not train_sessions:
-        raise ValueError("Training provenance must identify training subjects or sessions.")
-    eval_subjects = {record.subject_id for record in records}
-    eval_sessions = {record.session_id for record in records}
-    overlapping_subjects = sorted(eval_subjects & train_subjects)
-    overlapping_sessions = sorted(eval_sessions & train_sessions)
-    if overlapping_subjects or overlapping_sessions:
-        raise ValueError(
-            "Evaluation groups overlap the model training provenance: "
-            f"subjects={overlapping_subjects}, sessions={overlapping_sessions}."
-        )
+    validated_provenance = validate_training_provenance(provenance)
+    validate_evaluation_group_separation(records, validated_provenance)
 
     if baseline_classifier is None:
         baseline_classifier = RuleBasedBaseline()
 
-    # 1. Subject-first / session-fallback grouped split
-    _, val_records, split_result = split_records_by_group(
-        records,
-        train_ratio=train_ratio,
-        seed=seed,
-    )
-
-    if not val_records:
+    # Extract every eligible window from the supplied independent dataset.
+    evaluation_windows = extract_windows(records, normalizer=normalizer)
+    if not evaluation_windows:
         raise ValueError(
-            f"Held-out validation partition is unavailable: {split_result.limitation_note}"
-        )
-
-    # 2. Extract validation windows using the fitted normalizer
-    val_windows = extract_windows(val_records, normalizer=normalizer)
-    if not val_windows:
-        raise ValueError(
-            "Validation partition yielded 0 usable windows (segments may be shorter than W=60 "
+            "Independent evaluation records yielded 0 usable windows (segments may be shorter than W=60 "
             "or overlap ambiguous annotations)."
         )
 
-    # 3. Evaluate GRU model on validation windows
+    # Evaluate the model on every independent evaluation window.
     model.eval()
-    val_dataset = FatigueWindowDataset(val_windows)
+    evaluation_dataset = FatigueWindowDataset(evaluation_windows)
 
     gru_y_true: list[int] = []
     gru_y_pred: list[int | None] = []
 
     with torch.no_grad():
-        for i in range(len(val_dataset)):
-            features, target = val_dataset[i]
+        for i in range(len(evaluation_dataset)):
+            features, target = evaluation_dataset[i]
             batch_x = features.unsqueeze(0)  # (1, 60, 8)
             logits = model(batch_x)
             pred_id = int(torch.argmax(logits, dim=-1).item())
@@ -236,16 +219,15 @@ def compare_models(
         ambiguous_count=0,
     )
 
-    # 4. Evaluate D3 rule baseline on matched window endpoints
-    # Index validation records by (session_id, frame_index)
+    # Evaluate D3 on the same window endpoints.
     rec_index: dict[tuple[str, int], SampleRecord] = {
-        (r.session_id, r.frame_index): r for r in val_records
+        (r.session_id, r.frame_index): r for r in records
     }
 
     matched_base_true: list[int] = []
     matched_base_pred: list[int | None] = []
 
-    for w in val_windows:
+    for w in evaluation_windows:
         endpoint_key = (w.session_id, w.end_frame_index)
         sample = rec_index.get(endpoint_key)
         if sample is None:
@@ -262,15 +244,29 @@ def compare_models(
         ambiguous_count=0,
     )
 
-    # 5. Full frame-by-frame baseline evaluation on all eligible validation records
-    baseline_full_report = evaluate_baseline(val_records, baseline_classifier)
+    baseline_full_report = evaluate_baseline(records, baseline_classifier)
+    evaluation_subjects = sorted({record.subject_id for record in records})
+    evaluation_sessions = sorted({record.session_id for record in records})
+    split_result = DatasetGroupSplitResult(
+        train_sessions=[],
+        val_sessions=evaluation_sessions,
+        train_subjects=[],
+        val_subjects=evaluation_subjects,
+        strategy=validated_provenance["strategy"],
+        subject_count=len(evaluation_subjects),
+        session_count=len(evaluation_sessions),
+        limitation_note=(
+            "Records were supplied as an independent evaluation set; no secondary "
+            "train/validation split was performed."
+        ),
+    )
 
     return ModelComparisonReport(
         gru_report=gru_report,
         baseline_matched_report=baseline_matched_report,
         baseline_full_report=baseline_full_report,
         split_result=split_result,
-        window_count=len(val_windows),
+        window_count=len(evaluation_windows),
         is_synthetic=is_synthetic,
     )
 

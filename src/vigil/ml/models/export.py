@@ -16,6 +16,7 @@ from vigil.ml.dataset.config import (
 )
 from vigil.ml.dataset.normalizer import CONTINUOUS_FEATURE_NAMES, FeatureNormalizer
 from vigil.ml.models.gru import GRUConfig, GRUTemporalClassifier
+from vigil.ml.provenance import validate_training_provenance
 
 try:
     import torch
@@ -115,7 +116,9 @@ def export_model_bundle(
     bundle_metadata = dict(metadata) if metadata is not None else {}
     training_provenance = getattr(model, "training_provenance", None)
     if training_provenance is not None:
-        bundle_metadata["training_provenance"] = dict(training_provenance)
+        bundle_metadata["training_provenance"] = validate_training_provenance(
+            training_provenance
+        )
 
     bundle_dict = {
         "bundle_version": BUNDLE_SCHEMA_VERSION,
@@ -320,8 +323,14 @@ def load_model_bundle(
             "class_labels must exactly match the canonical mapping "
             "{0: 'ACTIVE', 1: 'DROWSY', 2: 'SLEEPING'}."
         )
-    if not isinstance(raw_bundle.get("metadata", {}), dict):
+    metadata = raw_bundle.get("metadata", {})
+    if not isinstance(metadata, dict):
         raise TypeError("metadata in bundle must be a dictionary.")
+    if "training_provenance" in metadata:
+        metadata = dict(metadata)
+        metadata["training_provenance"] = validate_training_provenance(
+            metadata["training_provenance"]
+        )
 
     return LoadedModelBundle(
         model=model,
@@ -331,5 +340,5 @@ def load_model_bundle(
         class_labels=class_labels,
         feature_channels=bundle_channels,
         bundle_version=bundle_version,
-        metadata=raw_bundle.get("metadata", {}),
+        metadata=metadata,
     )

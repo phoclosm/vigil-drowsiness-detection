@@ -231,6 +231,11 @@ class TestTrainingPipeline:
         val_subjs = set(result.split_result.val_subjects)
         assert train_subjs.isdisjoint(val_subjs)
         assert result.split_result.strategy == "subject"
+        assert result.training_provenance["train_subjects"] == sorted(train_subjs)
+        assert result.training_provenance["val_subjects"] == sorted(val_subjs)
+        assert result.training_provenance["train_sessions"] == result.split_result.train_sessions
+        assert result.training_provenance["val_sessions"] == result.split_result.val_sessions
+        assert result.model.training_provenance == result.training_provenance  # type: ignore[attr-defined]
 
     def test_loss_reduction_over_epochs(self) -> None:
         """Verify that training loss decreases across epochs on a learnable synthetic task."""

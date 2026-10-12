@@ -74,11 +74,13 @@ class TrainingResult:
 
     @property
     def training_provenance(self) -> dict[str, Any]:
-        """Return the grouped identities used to train this model."""
+        """Return all grouped identities used for model development."""
         return {
             "strategy": self.split_result.strategy,
             "train_subjects": list(self.split_result.train_subjects),
+            "val_subjects": list(self.split_result.val_subjects),
             "train_sessions": list(self.split_result.train_sessions),
+            "val_sessions": list(self.split_result.val_sessions),
         }
 
 
@@ -230,7 +232,9 @@ def train_temporal_classifier(
     model.training_provenance = {  # type: ignore[attr-defined]
         "strategy": split_result.strategy,
         "train_subjects": list(split_result.train_subjects),
+        "val_subjects": list(split_result.val_subjects),
         "train_sessions": list(split_result.train_sessions),
+        "val_sessions": list(split_result.val_sessions),
     }
 
     checkpoint_path: str | None = None

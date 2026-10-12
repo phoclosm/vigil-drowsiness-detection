@@ -549,7 +549,9 @@ class TestModelExportAndLoad:
         model.training_provenance = {  # type: ignore[attr-defined]
             "strategy": "subject",
             "train_subjects": ["subject_train"],
+            "val_subjects": ["subject_val"],
             "train_sessions": ["session_train"],
+            "val_sessions": ["session_val"],
         }
         bundle_path = tmp_path / "provenance.pt"
         export_model_bundle(model, create_fitted_normalizer(), bundle_path)
@@ -1091,7 +1093,9 @@ class TestModelComparison:
             training_provenance={
                 "strategy": "subject",
                 "train_subjects": ["subject_999"],
+                "val_subjects": ["subject_998"],
                 "train_sessions": ["training_session"],
+                "val_sessions": ["validation_session"],
             },
             is_synthetic=True,
         )
@@ -1130,7 +1134,7 @@ class TestModelComparison:
     def test_compare_models_rejects_overlapping_training_groups(self) -> None:
         """Evaluation records overlapping training subjects or sessions are rejected."""
         model = GRUTemporalClassifier(GRUConfig())
-        with pytest.raises(ValueError, match="overlap the model training provenance"):
+        with pytest.raises(ValueError, match="overlap model-development provenance"):
             compare_models(
                 records=[make_test_sample(frame_index=0, subject_id="subject_001")],
                 model=model,
@@ -1138,8 +1142,120 @@ class TestModelComparison:
                 training_provenance={
                     "strategy": "subject",
                     "train_subjects": ["subject_001"],
-                    "train_sessions": [],
+                    "val_subjects": ["subject_002"],
+                    "train_sessions": ["training_session"],
+                    "val_sessions": ["validation_session"],
                 },
+            )
+
+    def test_compare_models_rejects_validation_group_overlap(self) -> None:
+        """Subject-strategy evaluation rejects groups used only for validation."""
+        model = GRUTemporalClassifier(GRUConfig())
+        records = [
+            make_test_sample(
+                frame_index=i,
+                subject_id="subject_val",
+                session_id="evaluation_session",
+            )
+            for i in range(80)
+        ]
+        with pytest.raises(ValueError, match="model-development provenance"):
+            compare_models(
+                records=records,
+                model=model,
+                normalizer=create_fitted_normalizer(),
+                training_provenance={
+                    "strategy": "subject",
+                    "train_subjects": ["subject_train"],
+                    "val_subjects": ["subject_val"],
+                    "train_sessions": ["training_session"],
+                    "val_sessions": ["validation_session"],
+                },
+            )
+
+    def test_session_strategy_allows_held_out_session_for_same_subject(self) -> None:
+        """Session fallback permits same-subject evaluation in a new session."""
+        model = GRUTemporalClassifier(GRUConfig())
+        records = [
+            make_test_sample(
+                frame_index=i,
+                subject_id="subject_001",
+                session_id="held_out_session",
+            )
+            for i in range(80)
+        ]
+        report = compare_models(
+            records=records,
+            model=model,
+            normalizer=create_fitted_normalizer(),
+            training_provenance={
+                "strategy": "session",
+                "train_subjects": ["subject_001"],
+                "val_subjects": ["subject_001"],
+                "train_sessions": ["training_session"],
+                "val_sessions": ["validation_session"],
+            },
+        )
+        assert report.window_count > 0
+        assert report.baseline_full_report.total_samples == 80
+        assert report.split_result.limitation_note is not None
+
+    def test_session_strategy_rejects_development_session_overlap(self) -> None:
+        """Session fallback rejects evaluation sessions used in model development."""
+        model = GRUTemporalClassifier(GRUConfig())
+        records = [
+            make_test_sample(
+                frame_index=i,
+                subject_id="subject_new",
+                session_id="validation_session",
+            )
+            for i in range(80)
+        ]
+        with pytest.raises(ValueError, match="overlap model-development provenance"):
+            compare_models(
+                records=records,
+                model=model,
+                normalizer=create_fitted_normalizer(),
+                training_provenance={
+                    "strategy": "session",
+                    "train_subjects": ["subject_001"],
+                    "val_subjects": ["subject_001"],
+                    "train_sessions": ["training_session"],
+                    "val_sessions": ["validation_session"],
+                },
+            )
+
+    @pytest.mark.parametrize(
+        "provenance",
+        [
+            {"strategy": "unknown"},
+            {
+                "strategy": "subject",
+                "train_subjects": ["subject_train"],
+                "val_subjects": ["subject_train"],
+                "train_sessions": ["session_train"],
+                "val_sessions": ["session_val"],
+            },
+            {
+                "strategy": "session",
+                "train_subjects": ["subject_train"],
+                "val_subjects": ["subject_train"],
+                "train_sessions": ["session_train"],
+            },
+        ],
+    )
+    def test_compare_models_rejects_malformed_provenance(
+        self,
+        provenance: dict[str, object],
+    ) -> None:
+        """Evaluation rejects unknown, incomplete, and overlapping provenance."""
+        model = GRUTemporalClassifier(GRUConfig())
+        with pytest.raises((TypeError, ValueError), match="provenance|strategy"):
+            compare_models(
+                records=[make_test_sample(frame_index=0)],
+                model=model,
+                normalizer=create_fitted_normalizer(),
+                training_provenance=provenance,
             )
 
     def test_evaluate_recording_directory_empty_or_nonexistent(self, tmp_path: Path) -> None:
