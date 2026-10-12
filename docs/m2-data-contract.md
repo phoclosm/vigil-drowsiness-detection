@@ -138,6 +138,26 @@ M1 Frame Output (per captured frame)
 
 ---
 
+### 4.1 Unlabeled Live-Inference Input
+
+M1 supplies unannotated camera frames to the D6 runtime using
+`vigil.ml.data.schema.LiveInputFrame`. This dedicated input contains the
+session/frame timing metadata, ocular features, and validity flags above, but
+does not contain `subject_id`, `label`, or `label_id`. M1 must not fabricate
+ground-truth fields for live inference. `SampleRecord` remains the strict
+labelled training and evaluation schema.
+
+`LiveInputFrame` uses the same missing-feature rules as `SampleRecord`:
+invalid landmarks carry `null` ocular values and are represented in the model
+feature vector by the established validity masks and fitted-normalizer
+imputation. Missing ground truth is not sensor invalidity.
+
+The runtime keeps a 60-timestep rolling window and executes inference every
+15 accepted frames. A new session or temporal discontinuity clears the window
+and reports `STATUS_INSUFFICIENT_HISTORY` while it rebuilds.
+
+---
+
 ## 5. M2 $\rightarrow$ M1 Inference Contract
 
 This section defines the semantic output payload contract that M2's trained model / inference adapter will publish to M1.
@@ -181,8 +201,8 @@ The `status` field communicates the validity of M2's output:
 | Status Code | Meaning (M2 Scope) |
 |:---|:---|
 | `STATUS_OK` | Inference succeeded; M2 produced a valid prediction and probability distribution. |
-| `STATUS_INSUFFICIENT_HISTORY` | Temporal feature buffer is filling (warm-up phase); fewer frames than required window length $T$. |
-| `STATUS_INVALID_INPUT` | Input features are invalid or missing across the window (e.g., face occluded or landmarks invalid). |
+| `STATUS_INSUFFICIENT_HISTORY` | The buffer is warming up, waiting for stride, or rebuilding after a session change or temporal discontinuity. |
+| `STATUS_INVALID_INPUT` | The input is structurally invalid or the feature window is unusable under this contract. No prediction-dependent field is populated. |
 | `STATUS_ERROR` | Internal exception or invalid tensor conversion; M2 could not produce a valid result. |
 
 *M1 Runtime Policy Separation: Downstream runtime behavior—including UI notifications, alert thresholds, auditory warnings, and fallback strategies—is strictly designed and owned by M1. M2 reports only the inference outcome.*

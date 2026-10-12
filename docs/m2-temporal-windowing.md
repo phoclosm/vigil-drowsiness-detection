@@ -57,8 +57,8 @@ Every temporal window contains an exact 8-channel feature vector per timestep:
    * **One Subject Per Session Invariant**: All records within a `session_id` must have the same `subject_id`. Mixed-subject sessions are rejected prior to splitting or windowing to prevent cross-partition session contamination.
 2. **Temporal Sequence Validation**:
    * Records within each session are ordered strictly by `frame_index`.
-   * **Duplicate Frame Detection**: Any duplicate `frame_index` within a session triggers an immediate `ValueError`.
-   * **Monotonic Timestamps**: Timestamps must strictly increase with frame index. Non-monotonic or reversed timestamps are rejected.
+   * **Duplicate Frame Detection**: Any duplicate or backward `frame_index` within a session returns `STATUS_INVALID_INPUT`, resets streaming sequence state, and requires a new continuous window.
+   * **Monotonic Timestamps**: Timestamps must strictly increase with frame index. Non-monotonic or reversed timestamps return `STATUS_INVALID_INPUT` and reset streaming sequence state.
    * **Preservation of Valid Gaps**: Valid frame drops ($\Delta_{\text{frame}} > 1$) and capture pauses ($\Delta_t > 200.0\text{ ms}$) trigger clean segment cuts without error.
 3. **Segmentation on Discontinuities**:
    * Continuous segments are split whenever:
