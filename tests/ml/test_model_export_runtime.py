@@ -543,6 +543,19 @@ class TestModelExportAndLoad:
         with pytest.raises(TypeError, match="normalizer must be a FeatureNormalizer"):
             export_model_bundle(model, "not_a_norm", tmp_path / "bundle.pt")  # type: ignore[arg-type]
 
+    def test_export_persists_training_provenance(self, tmp_path: Path) -> None:
+        """Training group provenance is carried into exported bundle metadata."""
+        model = GRUTemporalClassifier(GRUConfig())
+        model.training_provenance = {  # type: ignore[attr-defined]
+            "strategy": "subject",
+            "train_subjects": ["subject_train"],
+            "train_sessions": ["session_train"],
+        }
+        bundle_path = tmp_path / "provenance.pt"
+        export_model_bundle(model, create_fitted_normalizer(), bundle_path)
+        raw = torch.load(bundle_path, weights_only=False)
+        assert raw["metadata"]["training_provenance"]["train_subjects"] == ["subject_train"]
+
     def test_load_nonexistent_file_raises(self, tmp_path: Path) -> None:
         """Loading a non-existent bundle path must raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="Model bundle not found"):
@@ -610,6 +623,77 @@ class TestModelExportAndLoad:
         torch.save(raw, bundle_path)
 
         with pytest.raises(ValueError, match="normalizer in bundle must be a dictionary with is_fitted=True"):
+            load_model_bundle(bundle_path)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("model_type", "OtherModel", "Unsupported model_type"),
+            ("class_labels", {0: "ACTIVE", 1: "DROWSY", 2: "ALERT"}, "class_labels must exactly"),
+            ("window_config", {"window_length": 30, "stride": 5, "max_frame_gap": 1, "max_time_gap_ms": 200.0}, "window_config must use locked"),
+        ],
+    )
+    def test_load_rejects_incompatible_bundle_metadata(
+        self,
+        tmp_path: Path,
+        field: str,
+        value: object,
+        message: str,
+    ) -> None:
+        """Unsupported model, class, and window metadata fail during loading."""
+        bundle_path = tmp_path / f"bad_{field}.pt"
+        export_model_bundle(
+            GRUTemporalClassifier(GRUConfig()),
+            create_fitted_normalizer(),
+            bundle_path,
+        )
+        raw = torch.load(bundle_path, weights_only=False)
+        raw[field] = value
+        torch.save(raw, bundle_path)
+        with pytest.raises((TypeError, ValueError), match=message):
+            load_model_bundle(bundle_path)
+
+    @pytest.mark.parametrize(
+        ("section", "feature", "value", "message"),
+        [
+            ("means", "ear_avg", float("nan"), "normalizer.means"),
+            ("stds", "perclos", 0.0, "normalizer.stds"),
+            ("observed_counts", "blink_duration_ms", -1, "normalizer.observed_counts"),
+        ],
+    )
+    def test_load_rejects_invalid_normalizer_values(
+        self,
+        tmp_path: Path,
+        section: str,
+        feature: str,
+        value: object,
+        message: str,
+    ) -> None:
+        """Malformed normalizer statistics fail during bundle loading."""
+        bundle_path = tmp_path / f"bad_{section}.pt"
+        export_model_bundle(
+            GRUTemporalClassifier(GRUConfig()),
+            create_fitted_normalizer(),
+            bundle_path,
+        )
+        raw = torch.load(bundle_path, weights_only=False)
+        raw["normalizer"][section][feature] = value
+        torch.save(raw, bundle_path)
+        with pytest.raises(ValueError, match=message):
+            load_model_bundle(bundle_path)
+
+    def test_load_rejects_missing_normalizer_feature(self, tmp_path: Path) -> None:
+        """All continuous normalizer feature keys are required."""
+        bundle_path = tmp_path / "missing_norm_key.pt"
+        export_model_bundle(
+            GRUTemporalClassifier(GRUConfig()),
+            create_fitted_normalizer(),
+            bundle_path,
+        )
+        raw = torch.load(bundle_path, weights_only=False)
+        del raw["normalizer"]["means"]["ear_avg"]
+        torch.save(raw, bundle_path)
+        with pytest.raises(ValueError, match="required continuous feature keys"):
             load_model_bundle(bundle_path)
 
 
@@ -1004,6 +1088,11 @@ class TestModelComparison:
             records=records,
             model=model,
             normalizer=normalizer,
+            training_provenance={
+                "strategy": "subject",
+                "train_subjects": ["subject_999"],
+                "train_sessions": ["training_session"],
+            },
             is_synthetic=True,
         )
 
@@ -1027,6 +1116,31 @@ class TestModelComparison:
         assert "Synthetic Fixtures" in md
         assert "Macro F1" in md
         assert "Confusion Matrix" in md
+
+    def test_compare_models_requires_training_provenance(self) -> None:
+        """Evaluation cannot silently infer independence from an internal split."""
+        model = GRUTemporalClassifier(GRUConfig())
+        with pytest.raises(TypeError, match="Training provenance is required"):
+            compare_models(
+                records=[make_test_sample(frame_index=0)],
+                model=model,
+                normalizer=create_fitted_normalizer(),
+            )
+
+    def test_compare_models_rejects_overlapping_training_groups(self) -> None:
+        """Evaluation records overlapping training subjects or sessions are rejected."""
+        model = GRUTemporalClassifier(GRUConfig())
+        with pytest.raises(ValueError, match="overlap the model training provenance"):
+            compare_models(
+                records=[make_test_sample(frame_index=0, subject_id="subject_001")],
+                model=model,
+                normalizer=create_fitted_normalizer(),
+                training_provenance={
+                    "strategy": "subject",
+                    "train_subjects": ["subject_001"],
+                    "train_sessions": [],
+                },
+            )
 
     def test_evaluate_recording_directory_empty_or_nonexistent(self, tmp_path: Path) -> None:
         """evaluate_recording_directory returns None for missing/empty directories."""

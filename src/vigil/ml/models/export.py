@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from vigil.ml.dataset.config import (
     LOCKED_WINDOW_LENGTH,
     WindowConfig,
 )
-from vigil.ml.dataset.normalizer import FeatureNormalizer
+from vigil.ml.dataset.normalizer import CONTINUOUS_FEATURE_NAMES, FeatureNormalizer
 from vigil.ml.models.gru import GRUConfig, GRUTemporalClassifier
 
 try:
@@ -111,6 +112,11 @@ def export_model_bundle(
     dest_path = Path(filepath)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
+    bundle_metadata = dict(metadata) if metadata is not None else {}
+    training_provenance = getattr(model, "training_provenance", None)
+    if training_provenance is not None:
+        bundle_metadata["training_provenance"] = dict(training_provenance)
+
     bundle_dict = {
         "bundle_version": BUNDLE_SCHEMA_VERSION,
         "model_type": "GRUTemporalClassifier",
@@ -138,7 +144,7 @@ def export_model_bundle(
         },
         "feature_channels": list(LOCKED_FEATURE_CHANNELS),
         "class_labels": dict(CANONICAL_CLASS_LABELS),
-        "metadata": dict(metadata) if metadata is not None else {},
+        "metadata": bundle_metadata,
     }
 
     torch.save(bundle_dict, dest_path)
@@ -184,6 +190,7 @@ def load_model_bundle(
     # Validate required keys
     required_keys = (
         "bundle_version",
+        "model_type",
         "model_config",
         "state_dict",
         "normalizer",
@@ -205,7 +212,14 @@ def load_model_bundle(
             f"Supported major version is {supported_major}.x."
         )
 
+    if raw_bundle["model_type"] != "GRUTemporalClassifier":
+        raise ValueError(
+            "Unsupported model_type in bundle: expected 'GRUTemporalClassifier'."
+        )
+
     # Validate feature channels
+    if not isinstance(raw_bundle["feature_channels"], (list, tuple)):
+        raise TypeError("feature_channels in bundle must be a list or tuple.")
     bundle_channels = tuple(raw_bundle["feature_channels"])
     if bundle_channels != LOCKED_FEATURE_CHANNELS:
         raise ValueError(
@@ -217,6 +231,10 @@ def load_model_bundle(
     m_cfg_dict = raw_bundle["model_config"]
     if not isinstance(m_cfg_dict, dict):
         raise TypeError("model_config in bundle must be a dictionary.")
+    if m_cfg_dict.get("input_dim") != len(LOCKED_FEATURE_CHANNELS):
+        raise ValueError("model_config.input_dim must match the locked feature-channel count.")
+    if m_cfg_dict.get("num_classes") != len(CANONICAL_CLASS_LABELS):
+        raise ValueError("model_config.num_classes must match the canonical class count.")
 
     model_config = GRUConfig(
         input_dim=m_cfg_dict.get("input_dim", len(LOCKED_FEATURE_CHANNELS)),
@@ -238,6 +256,29 @@ def load_model_bundle(
     norm_dict = raw_bundle["normalizer"]
     if not isinstance(norm_dict, dict) or not norm_dict.get("is_fitted", False):
         raise ValueError("normalizer in bundle must be a dictionary with is_fitted=True.")
+    for section in ("means", "stds", "observed_counts"):
+        if not isinstance(norm_dict.get(section), dict):
+            raise TypeError(f"normalizer.{section} in bundle must be a dictionary.")
+    expected_norm_keys = set(CONTINUOUS_FEATURE_NAMES)
+    if (
+        set(norm_dict["means"]) != expected_norm_keys
+        or set(norm_dict["stds"]) != expected_norm_keys
+        or set(norm_dict["observed_counts"]) != expected_norm_keys
+    ):
+        raise ValueError(
+            "normalizer must contain exactly the required continuous feature keys: "
+            f"{sorted(expected_norm_keys)}."
+        )
+    for name in CONTINUOUS_FEATURE_NAMES:
+        mean = norm_dict["means"][name]
+        std = norm_dict["stds"][name]
+        count = norm_dict["observed_counts"][name]
+        if isinstance(mean, bool) or not isinstance(mean, (int, float)) or not math.isfinite(mean):
+            raise ValueError(f"normalizer.means['{name}'] must be finite.")
+        if isinstance(std, bool) or not isinstance(std, (int, float)) or not math.isfinite(std) or std <= 0.0:
+            raise ValueError(f"normalizer.stds['{name}'] must be finite and strictly positive.")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"normalizer.observed_counts['{name}'] must be a non-negative integer.")
 
     normalizer = FeatureNormalizer()
     normalizer.means = {k: float(v) for k, v in norm_dict.get("means", {}).items()}
@@ -247,14 +288,40 @@ def load_model_bundle(
 
     # Reconstruct window configuration
     w_cfg_dict = raw_bundle["window_config"]
+    if not isinstance(w_cfg_dict, dict):
+        raise TypeError("window_config in bundle must be a dictionary.")
+    for key in ("window_length", "stride", "max_frame_gap", "max_time_gap_ms"):
+        if key not in w_cfg_dict:
+            raise ValueError(f"window_config is missing required key: '{key}'.")
+    if (
+        w_cfg_dict["window_length"] != LOCKED_WINDOW_LENGTH
+        or w_cfg_dict["stride"] != LOCKED_STRIDE
+    ):
+        raise ValueError(
+            f"window_config must use locked window_length={LOCKED_WINDOW_LENGTH} "
+            f"and stride={LOCKED_STRIDE}."
+        )
     window_config = WindowConfig(
-        window_length=w_cfg_dict.get("window_length", LOCKED_WINDOW_LENGTH),
-        stride=w_cfg_dict.get("stride", LOCKED_STRIDE),
-        max_frame_gap=w_cfg_dict.get("max_frame_gap", 1),
-        max_time_gap_ms=w_cfg_dict.get("max_time_gap_ms", 200.0),
+        window_length=w_cfg_dict["window_length"],
+        stride=w_cfg_dict["stride"],
+        max_frame_gap=w_cfg_dict["max_frame_gap"],
+        max_time_gap_ms=w_cfg_dict["max_time_gap_ms"],
     )
 
-    class_labels = {int(k): str(v) for k, v in raw_bundle["class_labels"].items()}
+    if not isinstance(raw_bundle["class_labels"], dict):
+        raise TypeError("class_labels in bundle must be a dictionary.")
+    class_labels = raw_bundle["class_labels"]
+    if (
+        set(class_labels) != set(CANONICAL_CLASS_LABELS)
+        or any(isinstance(key, bool) or not isinstance(key, int) for key in class_labels)
+        or any(class_labels[key] != CANONICAL_CLASS_LABELS[key] for key in CANONICAL_CLASS_LABELS)
+    ):
+        raise ValueError(
+            "class_labels must exactly match the canonical mapping "
+            "{0: 'ACTIVE', 1: 'DROWSY', 2: 'SLEEPING'}."
+        )
+    if not isinstance(raw_bundle.get("metadata", {}), dict):
+        raise TypeError("metadata in bundle must be a dictionary.")
 
     return LoadedModelBundle(
         model=model,

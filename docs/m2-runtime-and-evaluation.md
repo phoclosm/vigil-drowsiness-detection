@@ -7,7 +7,7 @@ This document specifies the artifact export bundle format, stateful streaming ru
 M2 D6 bridges offline temporal model training with production runtime readiness by delivering:
 1. **Self-Contained Model Bundles**: Versioned `.pt` checkpoints encapsulating the trained GRU weights, architecture configuration, fitted `FeatureNormalizer` state, window configuration ($W=60, S=15$), and canonical class mappings.
 2. **Stateful Streaming Inference (`TemporalInferenceEngine`)**: A real-time rolling-window inference component consuming M1 `SampleRecord` or `LiveInputFrame` objects, respecting warm-up and stride intervals, enforcing temporal discontinuity resets, and emitting contract-conforming `InferenceResult` payloads on every step.
-3. **Reproducible Baseline Comparison (`compare_models`)**: A leakage-safe evaluation pipeline benchmarking the learned GRU sequence classifier against the D3 heuristic rule baseline across matched window endpoints and full frame sequences.
+3. **Reproducible Baseline Comparison (`compare_models`)**: An evaluation pipeline benchmarking the learned GRU sequence classifier against the D3 heuristic rule baseline across matched window endpoints and full frame sequences, requiring explicit training provenance and rejecting overlapping evaluation groups.
 
 ---
 
@@ -64,6 +64,11 @@ An exported model bundle is a self-contained PyTorch serialization dictionary co
         "git_commit": "ce02bd7",
         "author": "M2",
         "notes": "Trained on synthetic fixtures for D6 contract validation",
+        "training_provenance": {
+            "strategy": "subject",
+            "train_subjects": ["subject_001"],
+            "train_sessions": ["session_001"]
+        },
     },
 }
 ```
@@ -108,11 +113,12 @@ window_config = bundle.window_config  # WindowConfig(window_length=60, stride=15
 During `load_model_bundle`, the following validations occur:
 1. **File Existence**: Raises `FileNotFoundError` if the file does not exist.
 2. **Bundle Schema**: Raises `TypeError` if the deserialized payload is not a dictionary.
-3. **Required Sections**: Verifies presence of `bundle_version`, `model_config`, `state_dict`, `normalizer`, `window_config`, `feature_channels`, and `class_labels`. Missing sections raise `ValueError`.
+3. **Required Sections**: Verifies presence of `bundle_version`, exact `model_type`, `model_config`, `state_dict`, `normalizer`, `window_config`, `feature_channels`, and `class_labels`. Missing sections raise `ValueError`.
 4. **Version Compatibility**: Matches major version against `BUNDLE_SCHEMA_VERSION.split(".")[0]`. Incompatible versions raise `ValueError`.
 5. **Feature Channel Alignment**: Confirms that channel names and order match `LOCKED_FEATURE_CHANNELS` exactly.
-6. **Normalizer Integrity**: Requires `normalizer["is_fitted"] == True` with non-empty means and stds.
-7. **Model Reconstruction**: Instantiates `GRUTemporalClassifier` with restored `model_config`, loads `state_dict`, and sets `model.eval()`.
+6. **Normalizer Integrity**: Requires exactly the continuous feature keys (`ear_avg`, `blink_duration_ms`, `perclos`), finite means, finite positive standard deviations, and non-negative integer observation counts.
+7. **Window and Class Integrity**: Requires the locked `window_length=60` and `stride=15` metadata and the exact canonical class map (`0: ACTIVE`, `1: DROWSY`, `2: SLEEPING`).
+8. **Model Reconstruction**: Instantiates `GRUTemporalClassifier` with restored `model_config`, loads `state_dict`, and sets `model.eval()`.
 
 ---
 
@@ -259,7 +265,7 @@ The comparison pipeline is implemented in `src/vigil/ml/evaluation/comparison.py
 
 ### 4.1 Comparison Protocol (`compare_models`)
 
-The evaluation compares the learned GRU sequence classifier against the D3 heuristic rule baseline under strictly leakage-free conditions:
+The evaluation compares the learned GRU sequence classifier against the D3 heuristic rule baseline only when independence is explicit:
 
 ```python
 from vigil.ml.evaluation.comparison import compare_models
@@ -271,6 +277,7 @@ report = compare_models(
     baseline_classifier=RuleBasedBaseline(),
     train_ratio=0.75,
     seed=42,
+    training_provenance=bundle.metadata["training_provenance"],
     is_synthetic=False,
 )
 
@@ -279,9 +286,11 @@ print(report.to_markdown())
 
 ### 4.2 Data Leakage Prevention Guarantees
 
-1. **Pre-Window Grouped Splitting**: Records are partitioned into train and validation sets by `subject_id` (with fallback to `session_id`) **before** any window extraction occurs.
-2. **Train-Only Normalization**: The `FeatureNormalizer` is fitted strictly on the training partition.
-3. **Dual Baseline Benchmarking**:
+1. **Training Provenance Required**: `compare_models` requires the supplied model's `TrainingResult` provenance (persisted on trained models and exported bundles) or an explicit `training_provenance` argument. Missing provenance fails rather than silently treating an internal split as independent.
+2. **Group-Disjoint Evaluation**: Every evaluation record must have a `subject_id` and `session_id` disjoint from the recorded training groups. Overlaps fail before window extraction.
+3. **Pre-Window Grouped Splitting**: Records are partitioned into train and validation sets by `subject_id` (with fallback to `session_id`) **before** any window extraction occurs; this internal split does not replace provenance verification.
+4. **Train-Only Normalization**: The `FeatureNormalizer` is fitted strictly on the training partition used to produce the model.
+5. **Dual Baseline Benchmarking**:
    - **Matched Window Endpoints**: Evaluates the D3 rule baseline on the exact final-timestep frame ($t = 59$) of each valid 60-frame evaluation window. This yields a direct 1-to-1 comparison on identical decision events.
    - **Full Partition Evaluation**: Evaluates the D3 rule baseline frame-by-frame across all eligible validation records.
 4. **Metrics**:

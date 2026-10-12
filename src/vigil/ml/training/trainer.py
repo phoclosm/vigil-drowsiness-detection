@@ -72,6 +72,15 @@ class TrainingResult:
     normalizer: FeatureNormalizer
     checkpoint_path: str | None = None
 
+    @property
+    def training_provenance(self) -> dict[str, Any]:
+        """Return the grouped identities used to train this model."""
+        return {
+            "strategy": self.split_result.strategy,
+            "train_subjects": list(self.split_result.train_subjects),
+            "train_sessions": list(self.split_result.train_sessions),
+        }
+
 
 def train_temporal_classifier(
     records: list[SampleRecord],
@@ -218,6 +227,11 @@ def train_temporal_classifier(
     # Load best checkpoint weights into model
     model.load_state_dict(best_state_dict)
     model.eval()
+    model.training_provenance = {  # type: ignore[attr-defined]
+        "strategy": split_result.strategy,
+        "train_subjects": list(split_result.train_subjects),
+        "train_sessions": list(split_result.train_sessions),
+    }
 
     checkpoint_path: str | None = None
     if config.output_dir is not None:

@@ -135,6 +135,7 @@ def compare_models(
     train_ratio: float = 0.75,
     seed: int = 42,
     is_synthetic: bool = False,
+    training_provenance: dict[str, Any] | None = None,
 ) -> ModelComparisonReport:
     """Compare learned GRU sequence classifier and D3 rule baseline on held-out records.
 
@@ -151,6 +152,7 @@ def compare_models(
         train_ratio: Grouped split proportion (default 0.75).
         seed: Deterministic seed (default 42).
         is_synthetic: Flag indicating whether records are synthetic test fixtures.
+        training_provenance: Group identities used to train the supplied model.
 
     Returns:
         ModelComparisonReport detailing performance metrics and confusion matrices.
@@ -167,6 +169,26 @@ def compare_models(
 
     if not normalizer.is_fitted:
         raise ValueError("FeatureNormalizer must be fitted prior to model comparison.")
+
+    provenance = training_provenance or getattr(model, "training_provenance", None)
+    if not isinstance(provenance, dict):
+        raise TypeError(
+            "Training provenance is required for independent evaluation. "
+            "Pass training_provenance or evaluate a model produced by train_temporal_classifier."
+        )
+    train_subjects = set(provenance.get("train_subjects", []))
+    train_sessions = set(provenance.get("train_sessions", []))
+    if not train_subjects and not train_sessions:
+        raise ValueError("Training provenance must identify training subjects or sessions.")
+    eval_subjects = {record.subject_id for record in records}
+    eval_sessions = {record.session_id for record in records}
+    overlapping_subjects = sorted(eval_subjects & train_subjects)
+    overlapping_sessions = sorted(eval_sessions & train_sessions)
+    if overlapping_subjects or overlapping_sessions:
+        raise ValueError(
+            "Evaluation groups overlap the model training provenance: "
+            f"subjects={overlapping_subjects}, sessions={overlapping_sessions}."
+        )
 
     if baseline_classifier is None:
         baseline_classifier = RuleBasedBaseline()
@@ -306,5 +328,6 @@ def evaluate_recording_directory(
         records=records,
         model=bundle.model,
         normalizer=bundle.normalizer,
+        training_provenance=bundle.metadata.get("training_provenance"),
         is_synthetic=False,
     )
