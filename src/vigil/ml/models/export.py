@@ -104,6 +104,17 @@ def export_model_bundle(
     if not isinstance(model, GRUTemporalClassifier):
         raise TypeError(f"model must be a GRUTemporalClassifier, got {type(model).__name__}.")
 
+    if model.config.input_dim != len(LOCKED_FEATURE_CHANNELS):
+        raise ValueError(
+            "Cannot export a model with an input dimension that does not match the "
+            f"locked feature contract ({len(LOCKED_FEATURE_CHANNELS)})."
+        )
+    if model.config.num_classes != len(CANONICAL_CLASS_LABELS):
+        raise ValueError(
+            "Cannot export a model with a class count that does not match the "
+            f"canonical class contract ({len(CANONICAL_CLASS_LABELS)})."
+        )
+
     if not isinstance(normalizer, FeatureNormalizer):
         raise TypeError(f"normalizer must be a FeatureNormalizer, got {type(normalizer).__name__}.")
 

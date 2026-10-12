@@ -449,14 +449,13 @@ class TemporalInferenceEngine:
         try:
             feature_rows = [_build_feature_vector(s, self.normalizer) for s in self._buffer]
             if not any(row[4] or row[5] or row[7] for row in feature_rows):
-                latency_ms = _measured_latency_ms(_t_start)
                 return InferenceResult(
                     predicted_class=None,
                     class_id=None,
                     probabilities=None,
                     confidence=None,
                     status=STATUS_INVALID_INPUT,
-                    latency_ms=latency_ms if math.isfinite(latency_ms) else 0.0,
+                    latency_ms=0.0,
                     reason="invalid_input",
                     session_id=sample.session_id,
                     buffer_size=buf_len,

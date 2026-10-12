@@ -543,6 +543,22 @@ class TestModelExportAndLoad:
         with pytest.raises(TypeError, match="normalizer must be a FeatureNormalizer"):
             export_model_bundle(model, "not_a_norm", tmp_path / "bundle.pt")  # type: ignore[arg-type]
 
+    def test_export_incompatible_model_configuration_rejected(self, tmp_path: Path) -> None:
+        """Export rejects a model that cannot satisfy the locked runtime contract."""
+        normalizer = create_fitted_normalizer()
+        with pytest.raises(ValueError, match="input_dim"):
+            export_model_bundle(
+                GRUTemporalClassifier(GRUConfig(input_dim=4)),
+                normalizer,
+                tmp_path / "bad_input_dim.pt",
+            )
+        with pytest.raises(ValueError, match="num_classes"):
+            export_model_bundle(
+                GRUTemporalClassifier(GRUConfig(num_classes=2)),
+                normalizer,
+                tmp_path / "bad_class_count.pt",
+            )
+
     def test_export_persists_training_provenance(self, tmp_path: Path) -> None:
         """Training group provenance is carried into exported bundle metadata."""
         model = GRUTemporalClassifier(GRUConfig())
@@ -951,7 +967,7 @@ class TestTemporalInferenceEngine:
         assert result.probabilities is None
         assert result.confidence is None
         assert math.isfinite(result.latency_ms)
-        assert result.latency_ms >= 0.0
+        assert result.latency_ms == 0.0
 
     def test_output_conversion_failure_returns_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Errors while converting model output return STATUS_ERROR without output."""
