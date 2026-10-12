@@ -782,25 +782,34 @@ class TestTemporalInferenceEngine:
         assert res.buffer_size == 1
         assert engine.buffer_size == 1
 
-    def test_non_monotonic_sequence_rejected(self) -> None:
-        """Duplicate or decreasing frame indices or timestamps must raise ValueError."""
+    def test_non_monotonic_sequence_returns_invalid_and_resets(self) -> None:
+        """Monotonicity violations return invalid responses and reset streaming state."""
         model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
         normalizer = create_fitted_normalizer()
         engine = TemporalInferenceEngine(model=model, normalizer=normalizer)
 
         engine.process_sample(make_test_sample(frame_index=5, timestamp_ms=100.0))
 
-        # Duplicate frame index
-        with pytest.raises(ValueError, match="Duplicate or decreasing frame index"):
-            engine.process_sample(make_test_sample(frame_index=5, timestamp_ms=133.3))
+        result = engine.process_sample(make_test_sample(frame_index=5, timestamp_ms=133.3))
+        assert result.status == STATUS_INVALID_INPUT
+        assert result.predicted_class is None
+        assert result.buffer_size == 0
+        assert engine.buffer_size == 0
+        assert engine.current_session_id is None
 
-        # Decreasing frame index
-        with pytest.raises(ValueError, match="Duplicate or decreasing frame index"):
-            engine.process_sample(make_test_sample(frame_index=4, timestamp_ms=133.3))
+        # A valid frame starts a fresh sequence after the reset.
+        result = engine.process_sample(make_test_sample(frame_index=0, timestamp_ms=0.0))
+        assert result.status == STATUS_INSUFFICIENT_HISTORY
+        assert result.buffer_size == 1
 
-        # Non-monotonic timestamp
-        with pytest.raises(ValueError, match="Non-monotonic timestamp detected"):
-            engine.process_sample(make_test_sample(frame_index=6, timestamp_ms=90.0))
+        result = engine.process_sample(make_test_sample(frame_index=1, timestamp_ms=0.0))
+        assert result.status == STATUS_INVALID_INPUT
+        assert result.predicted_class is None
+        assert engine.buffer_size == 0
+
+        result = engine.process_sample(make_test_sample(frame_index=1, timestamp_ms=33.3))
+        assert result.status == STATUS_INSUFFICIENT_HISTORY
+        assert result.buffer_size == 1
 
     def test_invalid_sample_schema_returns_invalid_contract_response(self) -> None:
         """A malformed record cannot produce a prediction and returns a full response."""
@@ -834,6 +843,50 @@ class TestTemporalInferenceEngine:
 
         assert res.has_prediction  # type: ignore[possibly-undefined]
         assert res.reason == "predicted"  # type: ignore[possibly-undefined]
+
+    def test_fully_unusable_window_returns_invalid_input(self) -> None:
+        """A window with no valid feature-mask channels cannot be predicted."""
+        model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
+        engine = TemporalInferenceEngine(model=model, normalizer=create_fitted_normalizer())
+
+        for i in range(60):
+            result = engine.process_sample(
+                make_test_sample(
+                    frame_index=i,
+                    landmarks_valid=False,
+                    perclos=None,
+                )
+            )
+
+        assert result.status == STATUS_INVALID_INPUT
+        assert result.reason == "invalid_input"
+        assert result.predicted_class is None
+        assert result.class_id is None
+        assert result.probabilities is None
+        assert result.confidence is None
+        assert math.isfinite(result.latency_ms)
+        assert result.latency_ms >= 0.0
+
+    def test_output_conversion_failure_returns_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Errors while converting model output return STATUS_ERROR without output."""
+        model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
+        engine = TemporalInferenceEngine(model=model, normalizer=create_fitted_normalizer())
+
+        import vigil.ml.inference.engine as engine_mod
+
+        def fail_softmax(*_args: object, **_kwargs: object) -> torch.Tensor:
+            raise RuntimeError("output conversion failure")
+
+        monkeypatch.setattr(engine_mod.torch, "softmax", fail_softmax)
+        for i in range(60):
+            result = engine.process_sample(make_test_sample(frame_index=i))
+
+        assert result.status == STATUS_ERROR
+        assert result.predicted_class is None
+        assert result.probabilities is None
+        assert result.confidence is None
+        assert math.isfinite(result.latency_ms)
+        assert result.latency_ms >= 0.0
 
     def test_engine_from_bundle_factory(self, tmp_path: Path) -> None:
         """Engine can be instantiated directly via TemporalInferenceEngine.from_bundle."""

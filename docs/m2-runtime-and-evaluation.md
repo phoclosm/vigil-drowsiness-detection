@@ -145,7 +145,7 @@ stateDiagram-v2
     Resetting --> WarmingUp: Buffer cleared (size=1)
 ```
 
-1. **Schema Validation**: Every incoming `SampleRecord` or `LiveInputFrame` is validated against its strict schema. Structurally invalid inputs return `STATUS_INVALID_INPUT` with no prediction.
+1. **Schema Validation**: Every incoming `SampleRecord` or `LiveInputFrame` is validated against its strict schema. Structurally invalid inputs return `STATUS_INVALID_INPUT` with no prediction. Duplicate/backward frame indices and non-increasing timestamps also return `STATUS_INVALID_INPUT`, reset sequence state, and require 60 new continuous frames.
 2. **Buffer Bounding**: An internal `deque(maxlen=60)` retains at most 60 timesteps.
 3. **Warm-Up Phase**:
    - Frames 0 to 58 (first 59 samples): No prediction is emitted (`has_prediction=False`, `reason="buffer_warming_up"`).
@@ -161,9 +161,10 @@ stateDiagram-v2
    - **Capture Stalls** ($\Delta t > 200.0\text{ ms}$): The rolling buffer is cleared, and warm-up restarts (`reason="discontinuity_timing_gap"`).
    - A window is **never** silently constructed across a discontinuity.
 7. **Monotonicity Enforcement**:
-   - Duplicate frame indices ($\text{frame} \le \text{prev\_frame}$) or backward timestamps ($\text{timestamp} \le \text{prev\_timestamp}$) within the same session raise a `ValueError`.
+   - Duplicate/backward frame indices ($\text{frame} \le \text{prev\_frame}$) or non-increasing timestamps ($\text{timestamp} \le \text{prev\_timestamp}$) return `STATUS_INVALID_INPUT`, clear sequence state, and do not enter the invalid frame into the new window.
 8. **Missing Features & Landmark Imputation**:
    - Frames with missing landmarks (`landmarks_valid=False`) or missing continuous ocular metrics are imputed deterministically using the fitted `FeatureNormalizer` (`imputed_value = 0.0`), with validity masks set to `0.0`. The engine continues streaming without crashing.
+   - A complete 60-frame window with no valid ocular feature-mask channel (EAR, eye-closure, or PERCLOS) is `STATUS_INVALID_INPUT`; partially missing windows remain eligible for inference.
 
 ### 3.2 Unlabeled Live-Inference Input: `LiveInputFrame`
 

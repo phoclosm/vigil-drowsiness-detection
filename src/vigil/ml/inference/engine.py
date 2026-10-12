@@ -33,8 +33,7 @@ STATUS_INSUFFICIENT_HISTORY = "STATUS_INSUFFICIENT_HISTORY"
 """Temporal buffer is filling (warm-up phase) or waiting for the next stride step."""
 
 STATUS_INVALID_INPUT = "STATUS_INVALID_INPUT"
-"""Input frame is structurally invalid, or the sequence was reset due to a
-discontinuity; no prediction can be produced."""
+"""Input frame or feature window is unusable under the published contract."""
 
 STATUS_ERROR = "STATUS_ERROR"
 """An internal inference failure prevented a valid prediction."""
@@ -101,7 +100,8 @@ class InferenceResult:
         Internal status code providing more granular context:
         ``'predicted'``, ``'buffer_warming_up'``, ``'stride_skip'``,
         ``'session_reset'``, ``'discontinuity_frame_gap'``,
-        ``'discontinuity_timing_gap'``, ``'inference_error'``.
+        ``'discontinuity_timing_gap'``, ``'invalid_input'``,
+        ``'inference_error'``.
     session_id : str | None
         Active session identifier.
     buffer_size : int
@@ -198,8 +198,8 @@ class TemporalInferenceEngine:
     - Detects frame-index gaps (> 1) and timing gaps (> 200 ms); resets
       buffer on discontinuity.
     - Resets buffer when encountering session boundary changes.
-    - Rejects duplicate frame indices or non-monotonic timestamps with a
-      clear ``ValueError``.
+    - Returns ``STATUS_INVALID_INPUT`` for duplicate frame indices or
+      non-monotonic timestamps and resets sequence state.
     - Every response contains all six required contract fields; ``None`` is
       used for prediction-dependent values when no prediction exists.
     - ``latency_ms`` is measured from just before feature extraction to just
@@ -366,6 +366,27 @@ class TemporalInferenceEngine:
                 end_timestamp_ms=sample.timestamp_ms,
             )
 
+        def _invalid_input() -> InferenceResult:
+            return InferenceResult(
+                predicted_class=None,
+                class_id=None,
+                probabilities=None,
+                confidence=None,
+                status=STATUS_INVALID_INPUT,
+                latency_ms=0.0,
+                reason="invalid_input",
+                session_id=sample.session_id,
+                buffer_size=len(self._buffer),
+                start_frame_index=self._buffer[0].frame_index if self._buffer else None,
+                end_frame_index=sample.frame_index,
+                start_timestamp_ms=self._buffer[0].timestamp_ms if self._buffer else None,
+                end_timestamp_ms=sample.timestamp_ms,
+            )
+
+        def _measured_latency_ms(start: float) -> float:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            return elapsed_ms if math.isfinite(elapsed_ms) and elapsed_ms >= 0.0 else 0.0
+
         # 1. Session boundary check
         if self._current_session_id is not None and sample.session_id != self._current_session_id:
             self.reset()
@@ -381,16 +402,11 @@ class TemporalInferenceEngine:
         if self._prev_frame is not None:
             # Monotonicity checks
             if sample.frame_index <= self._prev_frame.frame_index:
-                raise ValueError(
-                    f"Duplicate or decreasing frame index in session '{sample.session_id}': "
-                    f"previous frame {self._prev_frame.frame_index} followed by {sample.frame_index}."
-                )
+                self.reset()
+                return _invalid_input()
             if sample.timestamp_ms <= self._prev_frame.timestamp_ms:
-                raise ValueError(
-                    f"Non-monotonic timestamp detected in session '{sample.session_id}': "
-                    f"frame {self._prev_frame.frame_index} ({self._prev_frame.timestamp_ms}ms) "
-                    f"followed by frame {sample.frame_index} ({sample.timestamp_ms}ms)."
-                )
+                self.reset()
+                return _invalid_input()
 
             frame_gap = sample.frame_index - self._prev_frame.frame_index
             time_gap_ms = sample.timestamp_ms - self._prev_frame.timestamp_ms
@@ -432,6 +448,23 @@ class TemporalInferenceEngine:
         _t_start = time.perf_counter()
         try:
             feature_rows = [_build_feature_vector(s, self.normalizer) for s in self._buffer]
+            if not any(row[4] or row[5] or row[7] for row in feature_rows):
+                latency_ms = _measured_latency_ms(_t_start)
+                return InferenceResult(
+                    predicted_class=None,
+                    class_id=None,
+                    probabilities=None,
+                    confidence=None,
+                    status=STATUS_INVALID_INPUT,
+                    latency_ms=latency_ms if math.isfinite(latency_ms) else 0.0,
+                    reason="invalid_input",
+                    session_id=sample.session_id,
+                    buffer_size=buf_len,
+                    start_frame_index=first_frame.frame_index,
+                    end_frame_index=sample.frame_index,
+                    start_timestamp_ms=first_frame.timestamp_ms,
+                    end_timestamp_ms=sample.timestamp_ms,
+                )
             tensor_x = torch.tensor([feature_rows], dtype=torch.float32)
 
             with torch.no_grad():
@@ -439,8 +472,26 @@ class TemporalInferenceEngine:
                 probs = torch.softmax(logits, dim=-1)[0]
                 pred_id = int(torch.argmax(logits, dim=-1)[0].item())
 
-        except (IndexError, KeyError, RuntimeError, TypeError, ValueError):
-            latency_ms = max(0.0, (time.perf_counter() - _t_start) * 1000.0)
+            latency_ms = _measured_latency_ms(_t_start)
+            probabilities = [float(value.item()) for value in probs]
+            if (
+                len(probabilities) != len(CANONICAL_CLASS_LABELS)
+                or not all(
+                    math.isfinite(value) and 0.0 <= value <= 1.0
+                    for value in probabilities
+                )
+                or not math.isclose(sum(probabilities), 1.0, abs_tol=1e-5)
+                or pred_id not in CANONICAL_CLASS_LABELS
+                or not math.isfinite(latency_ms)
+            ):
+                raise ValueError("Model output failed the runtime probability contract.")
+            pred_label = CANONICAL_CLASS_LABELS[pred_id]
+            prob_dict = {
+                CANONICAL_CLASS_LABELS[i]: probabilities[i] for i in range(3)
+            }
+            confidence = probabilities[pred_id]
+        except Exception:  # noqa: BLE001
+            latency_ms = _measured_latency_ms(_t_start)
             return InferenceResult(
                 predicted_class=None,
                 class_id=None,
@@ -457,39 +508,8 @@ class TemporalInferenceEngine:
                 end_timestamp_ms=sample.timestamp_ms,
             )
 
-        latency_ms = max(0.0, (time.perf_counter() - _t_start) * 1000.0)
-        probabilities = [float(value.item()) for value in probs]
-        if (
-            len(probabilities) != len(CANONICAL_CLASS_LABELS)
-            or not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in probabilities)
-            or not math.isclose(sum(probabilities), 1.0, abs_tol=1e-5)
-            or pred_id not in CANONICAL_CLASS_LABELS
-            or not math.isfinite(latency_ms)
-        ):
-            return InferenceResult(
-                predicted_class=None,
-                class_id=None,
-                probabilities=None,
-                confidence=None,
-                status=STATUS_ERROR,
-                latency_ms=latency_ms if math.isfinite(latency_ms) and latency_ms >= 0.0 else 0.0,
-                reason="inference_error",
-                session_id=sample.session_id,
-                buffer_size=buf_len,
-                start_frame_index=first_frame.frame_index,
-                end_frame_index=sample.frame_index,
-                start_timestamp_ms=first_frame.timestamp_ms,
-                end_timestamp_ms=sample.timestamp_ms,
-            )
-
         self._has_ever_predicted = True
         self._samples_since_last_prediction = 0
-
-        pred_label = CANONICAL_CLASS_LABELS[pred_id]
-        prob_dict = {
-            CANONICAL_CLASS_LABELS[i]: probabilities[i] for i in range(3)
-        }
-        confidence = probabilities[pred_id]
 
         return InferenceResult(
             predicted_class=pred_label,
