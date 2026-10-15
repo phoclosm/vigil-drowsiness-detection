@@ -42,12 +42,15 @@ def make_features(
     timestamp_ms: float = 0.0,
     *,
     landmarks_valid: bool = True,
+    face_detected: bool | None = None,
 ) -> EyeFeatureFrame:
     ear = 0.30 if landmarks_valid else None
     return EyeFeatureFrame(
         frame_index=frame_index,
         timestamp_ms=timestamp_ms,
-        face_detected=landmarks_valid,
+        face_detected=(
+            landmarks_valid if face_detected is None else face_detected
+        ),
         landmarks_valid=landmarks_valid,
         ear_left=ear,
         ear_right=ear,
@@ -172,6 +175,124 @@ def test_adapter_never_invents_a_state_for_no_prediction_statuses(
     assert prediction.confidence is None
     assert prediction.source_frame_index is None
     assert not prediction.is_fresh
+
+
+@pytest.mark.parametrize("face_detected", [False, True])
+def test_missing_landmarks_are_forwarded_without_synthetic_eye_values(
+    face_detected: bool,
+) -> None:
+    engine = FakeEngine([make_result(frame_index=0)])
+    adapter = ModelInferenceAdapter(engine, session_id="live-session")
+
+    prediction = adapter.process(
+        make_features(
+            landmarks_valid=False,
+            face_detected=face_detected,
+        )
+    )
+
+    assert prediction.result.status == STATUS_INSUFFICIENT_HISTORY
+    assert len(engine.samples) == 1
+    sample = engine.samples[0]
+    assert sample.face_detected is face_detected
+    assert sample.landmarks_valid is False
+    assert sample.ear_left is None
+    assert sample.ear_right is None
+    assert sample.ear_avg is None
+    assert sample.is_eye_closed is None
+
+
+def test_stride_skip_with_missing_landmarks_retains_last_genuine_prediction(
+) -> None:
+    engine = FakeEngine(
+        [
+            make_result(frame_index=0, status=STATUS_OK, reason="predicted"),
+            make_result(
+                frame_index=1,
+                status=STATUS_INSUFFICIENT_HISTORY,
+                reason="stride_skip",
+            ),
+        ]
+    )
+    adapter = ModelInferenceAdapter(engine, session_id="live-session")
+    fresh = adapter.process(make_features())
+
+    retained = adapter.process(
+        make_features(
+            frame_index=1,
+            timestamp_ms=40.0,
+            landmarks_valid=False,
+            face_detected=False,
+        )
+    )
+
+    assert fresh.is_fresh
+    assert retained.result.status == STATUS_INSUFFICIENT_HISTORY
+    assert retained.result.reason == "stride_skip"
+    assert retained.state == "ACTIVE"
+    assert retained.confidence == pytest.approx(0.8)
+    assert retained.source_frame_index == 0
+    assert retained.is_available
+    assert not retained.is_fresh
+    assert len(engine.samples) == 2
+    assert engine.samples[1].landmarks_valid is False
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (STATUS_INSUFFICIENT_HISTORY, "buffer_warming_up"),
+        (STATUS_INSUFFICIENT_HISTORY, "session_reset"),
+        (STATUS_INSUFFICIENT_HISTORY, "discontinuity_frame_gap"),
+        (STATUS_INSUFFICIENT_HISTORY, "discontinuity_timing_gap"),
+        (STATUS_INVALID_INPUT, "invalid_input"),
+        (STATUS_ERROR, "inference_error"),
+    ],
+)
+def test_unusable_or_reset_result_clears_cached_prediction(
+    status: str,
+    reason: str,
+) -> None:
+    engine = FakeEngine(
+        [
+            make_result(frame_index=0, status=STATUS_OK, reason="predicted"),
+            make_result(frame_index=1, status=status, reason=reason),
+            make_result(
+                frame_index=2,
+                status=STATUS_INSUFFICIENT_HISTORY,
+                reason="stride_skip",
+            ),
+        ]
+    )
+    adapter = ModelInferenceAdapter(engine, session_id="live-session")
+    adapter.process(make_features())
+
+    unavailable = adapter.process(make_features(frame_index=1, timestamp_ms=40.0))
+    later_stride = adapter.process(make_features(frame_index=2, timestamp_ms=80.0))
+
+    assert not unavailable.is_available
+    assert not later_stride.is_available
+
+
+def test_reset_clears_cached_prediction() -> None:
+    engine = FakeEngine(
+        [
+            make_result(frame_index=0, status=STATUS_OK, reason="predicted"),
+            make_result(
+                frame_index=0,
+                status=STATUS_INSUFFICIENT_HISTORY,
+                reason="stride_skip",
+            ),
+        ]
+    )
+    adapter = ModelInferenceAdapter(engine, session_id="live-session")
+    adapter.process(make_features())
+
+    adapter.reset()
+    after_reset = adapter.process(make_features())
+
+    assert not after_reset.is_available
+    assert not after_reset.is_fresh
 
 
 def test_adapter_rejects_a_noncanonical_prediction() -> None:

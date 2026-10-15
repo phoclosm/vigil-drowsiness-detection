@@ -82,6 +82,9 @@ class ModelInferenceAdapter:
         self._engine = engine
         self._session_id = session_id
         self._last_timestamp_ms: float | None = None
+        self._cached_state: str | None = None
+        self._cached_confidence: float | None = None
+        self._cached_source_frame_index: int | None = None
 
     @classmethod
     def from_bundle(
@@ -108,8 +111,11 @@ class ModelInferenceAdapter:
 
     def reset(self) -> None:
         """Clear adapter timing and the model's temporal window."""
-        self._engine.reset()
-        self._last_timestamp_ms = None
+        try:
+            self._engine.reset()
+        finally:
+            self._last_timestamp_ms = None
+            self._clear_display_cache()
 
     def process(self, features: EyeFeatureFrame) -> LivePrediction:
         """Forward one eye-feature frame through the temporal model contract."""
@@ -117,6 +123,7 @@ class ModelInferenceAdapter:
             raise TypeError("features must be an EyeFeatureFrame")
 
         if self._last_timestamp_ms is None and features.frame_index != 0:
+            self._clear_display_cache()
             raise InferenceContractError(
                 "the first inference frame must have frame_index 0"
             )
@@ -144,6 +151,7 @@ class ModelInferenceAdapter:
                 fps=None,
             )
         except (TypeError, ValueError) as exc:
+            self._clear_display_cache()
             raise InferenceContractError(
                 f"eye features cannot form a live inference frame: {exc}"
             ) from exc
@@ -151,25 +159,43 @@ class ModelInferenceAdapter:
         try:
             result = self._engine.process_sample(live_frame)
         except Exception as exc:  # The adapter adds runtime context to backend errors.
+            self._clear_display_cache()
             raise ModelInferenceError(
                 f"model inference failed for frame {features.frame_index}: {exc}"
             ) from exc
 
-        _validate_result(
-            result,
-            session_id=self._session_id,
-            frame_index=features.frame_index,
-        )
+        try:
+            _validate_result(
+                result,
+                session_id=self._session_id,
+                frame_index=features.frame_index,
+            )
+        except InferenceContractError:
+            self._clear_display_cache()
+            raise
         self._last_timestamp_ms = features.timestamp_ms
 
         if result.status == STATUS_OK:
+            self._cached_state = result.predicted_class
+            self._cached_confidence = result.confidence
+            self._cached_source_frame_index = features.frame_index
             return LivePrediction(
                 result=result,
-                state=result.predicted_class,
-                confidence=result.confidence,
-                source_frame_index=features.frame_index,
+                state=self._cached_state,
+                confidence=self._cached_confidence,
+                source_frame_index=self._cached_source_frame_index,
                 is_fresh=True,
             )
+        if result.status == STATUS_INSUFFICIENT_HISTORY and result.reason == "stride_skip":
+            return LivePrediction(
+                result=result,
+                state=self._cached_state,
+                confidence=self._cached_confidence,
+                source_frame_index=self._cached_source_frame_index,
+                is_fresh=False,
+            )
+
+        self._clear_display_cache()
         return LivePrediction(
             result=result,
             state=None,
@@ -177,6 +203,11 @@ class ModelInferenceAdapter:
             source_frame_index=None,
             is_fresh=False,
         )
+
+    def _clear_display_cache(self) -> None:
+        self._cached_state = None
+        self._cached_confidence = None
+        self._cached_source_frame_index = None
 
 
 def _validate_result(
