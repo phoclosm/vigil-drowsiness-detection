@@ -53,6 +53,17 @@ from vigil.runtime.live_pipeline import (
     LivePipelineError,
     LivePipelineResult,
 )
+from vigil.runtime.overlay import (
+    ACTIVE_COLOR_BGR,
+    DROWSY_COLOR_BGR,
+    SLEEPING_COLOR_BGR,
+    UNAVAILABLE_COLOR_BGR,
+    OverlayDependencyError,
+    OverlayError,
+    PredictionOverlay,
+    PredictionOverlayConfig,
+    TextDrawingBackend,
+)
 from vigil.runtime.performance import (
     CAPTURE_STAGE_NAME,
     BenchmarkResult,
@@ -116,6 +127,15 @@ __all__ = [
     "LiveInferencePipeline",
     "LivePipelineError",
     "LivePipelineResult",
+    "ACTIVE_COLOR_BGR",
+    "DROWSY_COLOR_BGR",
+    "SLEEPING_COLOR_BGR",
+    "UNAVAILABLE_COLOR_BGR",
+    "OverlayDependencyError",
+    "OverlayError",
+    "PredictionOverlay",
+    "PredictionOverlayConfig",
+    "TextDrawingBackend",
     "CAPTURE_STAGE_NAME",
     "BenchmarkResult",
     "BenchmarkRunner",
