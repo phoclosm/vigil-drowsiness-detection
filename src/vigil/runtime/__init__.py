@@ -47,6 +47,12 @@ from vigil.runtime.inference import (
     ModelInferenceError,
     ModelLoadError,
 )
+from vigil.runtime.live_pipeline import (
+    MODEL_INFERENCE_STAGE_NAME,
+    LiveInferencePipeline,
+    LivePipelineError,
+    LivePipelineResult,
+)
 from vigil.runtime.performance import (
     CAPTURE_STAGE_NAME,
     BenchmarkResult,
@@ -106,6 +112,10 @@ __all__ = [
     "ModelInferenceAdapter",
     "ModelInferenceError",
     "ModelLoadError",
+    "MODEL_INFERENCE_STAGE_NAME",
+    "LiveInferencePipeline",
+    "LivePipelineError",
+    "LivePipelineResult",
     "CAPTURE_STAGE_NAME",
     "BenchmarkResult",
     "BenchmarkRunner",
