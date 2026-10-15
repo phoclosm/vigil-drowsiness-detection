@@ -39,6 +39,14 @@ from vigil.runtime.eye_features import (
     calculate_eye_aspect_ratio,
     calculate_eye_aspect_ratios,
 )
+from vigil.runtime.inference import (
+    InferenceContractError,
+    InferenceEngine,
+    LivePrediction,
+    ModelInferenceAdapter,
+    ModelInferenceError,
+    ModelLoadError,
+)
 from vigil.runtime.performance import (
     CAPTURE_STAGE_NAME,
     BenchmarkResult,
@@ -92,6 +100,12 @@ __all__ = [
     "EyeFeatureStreamConfig",
     "calculate_eye_aspect_ratio",
     "calculate_eye_aspect_ratios",
+    "InferenceContractError",
+    "InferenceEngine",
+    "LivePrediction",
+    "ModelInferenceAdapter",
+    "ModelInferenceError",
+    "ModelLoadError",
     "CAPTURE_STAGE_NAME",
     "BenchmarkResult",
     "BenchmarkRunner",
