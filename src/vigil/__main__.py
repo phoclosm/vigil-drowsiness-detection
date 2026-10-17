@@ -1,10 +1,15 @@
-"""Command-line entry point for the Vigil project scaffold."""
+"""Command-line entry point for the Vigil v0.1 live demo."""
+
+from __future__ import annotations
+
+from typing import Sequence
+
+from vigil.demo import main as demo_main
 
 
-def main() -> int:
-    """Confirm that the local Vigil package is installed and runnable."""
-    print("Vigil scaffold ready. Runtime features are not implemented yet.")
-    return 0
+def main(argv: Sequence[str] | None = None) -> int:
+    """Forward command-line arguments to the live demo."""
+    return demo_main(argv)
 
 
 if __name__ == "__main__":

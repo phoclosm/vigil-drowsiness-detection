@@ -1,15 +1,20 @@
-"""Tests for the Day 1 package entry point."""
+"""Tests for the package entry point."""
 
-from pytest import CaptureFixture
+from collections.abc import Sequence
 
-from vigil.__main__ import main
+import pytest
+
+import vigil.__main__ as entrypoint
 
 
-def test_main_reports_scaffold_status(capsys: CaptureFixture[str]) -> None:
-    """The scaffold command should exit cleanly and describe its limited scope."""
-    assert main() == 0
+def test_main_forwards_arguments_to_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[Sequence[str] | None] = []
 
-    captured = capsys.readouterr()
-    assert captured.out == (
-        "Vigil scaffold ready. Runtime features are not implemented yet.\n"
-    )
+    def fake_demo_main(argv: Sequence[str] | None = None) -> int:
+        received.append(argv)
+        return 7
+
+    monkeypatch.setattr(entrypoint, "demo_main", fake_demo_main)
+
+    assert entrypoint.main(["--webcam", "0"]) == 7
+    assert received == [["--webcam", "0"]]
