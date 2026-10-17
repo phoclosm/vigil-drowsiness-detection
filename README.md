@@ -109,8 +109,10 @@ The default tests use deterministic fixtures and do not require a camera.
 
 ## Documentation
 
+- [v0.1.0 changelog](CHANGELOG.md)
 - [System architecture](docs/architecture.md)
 - [Demo evidence and performance record](docs/demo-and-performance.md)
+- [Release checklist](docs/release-checklist.md)
 - [Vision benchmark protocol](docs/m1-vision-benchmark.md)
 - [Data contract](docs/m2-data-contract.md)
 - [Temporal windowing](docs/m2-temporal-windowing.md)

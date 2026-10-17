@@ -25,6 +25,10 @@ ml = [
 
 [project.scripts]
 vigil = "vigil.__main__:main"
+vigil-benchmark = "vigil.benchmark:main"
+
+[project.urls]
+Repository = "https://github.com/phoclosm/vigil-drowsiness-detection"
 
 [tool.setuptools.packages.find]
 where = ["src"]
