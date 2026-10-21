@@ -526,6 +526,45 @@ class TestModelExportAndLoad:
         bundle_alt = LoadedModelBundle.from_bundle(bundle_path)
         assert isinstance(bundle_alt, LoadedModelBundle)
 
+    def test_loaded_bundle_runs_live_inference_after_warmup(self, tmp_path: Path) -> None:
+        """A loaded bundle preserves metadata and serves the established live contract."""
+        model = GRUTemporalClassifier(GRUConfig(hidden_dim=16))
+        model.training_provenance = {  # type: ignore[attr-defined]
+            "strategy": "session",
+            "train_subjects": ["subject_001"],
+            "val_subjects": ["subject_001"],
+            "train_sessions": ["training_session"],
+            "val_sessions": ["validation_session"],
+        }
+        normalizer = create_fitted_normalizer()
+        bundle_path = tmp_path / "live_smoke_bundle.pt"
+        export_model_bundle(model, normalizer, bundle_path)
+
+        bundle = load_model_bundle(bundle_path)
+        assert bundle.model.config == model.config
+        assert bundle.normalizer.to_dict() == normalizer.to_dict()
+        assert bundle.feature_channels == LOCKED_FEATURE_CHANNELS
+        assert bundle.class_labels == CANONICAL_CLASS_LABELS
+        assert bundle.window_config.window_length == LOCKED_WINDOW_LENGTH
+        assert bundle.window_config.stride == LOCKED_STRIDE
+        assert bundle.metadata["training_provenance"]["val_sessions"] == [
+            "validation_session"
+        ]
+
+        engine = TemporalInferenceEngine(bundle.model, bundle.normalizer)
+        result = None
+        for frame_index in range(LOCKED_WINDOW_LENGTH):
+            result = engine.step(make_live_frame(frame_index))
+
+        assert result is not None
+        assert result.status == STATUS_OK
+        assert result.predicted_class in CANONICAL_CLASS_LABELS.values()
+        assert result.class_id in CANONICAL_CLASS_LABELS
+        assert result.probabilities is not None
+        assert set(result.probabilities) == set(CANONICAL_CLASS_LABELS.values())
+        assert result.confidence is not None
+        assert result.latency_ms >= 0.0
+
     def test_export_unfitted_normalizer_rejected(self, tmp_path: Path) -> None:
         """Exporting an unfitted normalizer must raise a ValueError."""
         model = GRUTemporalClassifier(GRUConfig())
