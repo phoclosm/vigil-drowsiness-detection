@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import WindowConfig
 from vigil.ml.dataset.windowing import extract_windows
@@ -127,3 +129,22 @@ def test_unprovenanced_audit_serializes_unknown_not_false() -> None:
 
     assert audit.to_dict()["is_synthetic"] == "unknown"
     assert "Synthetic Fixtures**: unknown" in audit.to_markdown()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"is_synthetic": "yes"}, TypeError),
+        ({"dataset_name": " "}, ValueError),
+        ({"dataset_release": ""}, ValueError),
+        ({"manifest_id": " "}, ValueError),
+        ({"manifest_exclusions": True}, TypeError),
+        ({"manifest_exclusions": -1}, ValueError),
+        ({"manifest_exclusions": 0}, ValueError),
+    ],
+)
+def test_audit_rejects_invalid_or_unsupported_metadata(
+    kwargs: dict[str, object], error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        audit_evaluation_input([], **kwargs)  # type: ignore[arg-type]

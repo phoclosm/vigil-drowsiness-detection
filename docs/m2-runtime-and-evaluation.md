@@ -325,8 +325,9 @@ report = evaluate_recording_directory(
 - Standalone `audit_evaluation_input()` reports use `is_synthetic: "unknown"`
   unless provenance is explicitly supplied. Directory evaluation supplies
   `is_synthetic: false` and records the discovered JSONL file count; dataset,
-  release, manifest identifier, and validated manifest-exclusion count are
-  optional explicit inputs and are never inferred.
+  release, and manifest identifier are optional explicit inputs and are never
+  inferred. Manifest-exclusion counts remain unsupported until a validated
+  manifest input is added; supplying a count is rejected.
 
 ---
 

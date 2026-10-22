@@ -238,7 +238,8 @@ The run record must additionally preserve:
   Standalone audit construction marks synthetic provenance as `unknown` unless
   explicitly supplied; directory evaluation marks its validated recording
   input as non-synthetic and counts discovered recording files. Dataset/release
-  metadata and manifest exclusion counts are not inferred.
+  metadata are not inferred. Manifest-exclusion counts remain unsupported by
+  this iteration and are rejected unless a validated manifest input is added.
 - The synthetic-fixture flag must be false only for a verified real-data run.
 
 The existing `BaselineEvaluationReport` and `ModelComparisonReport` already

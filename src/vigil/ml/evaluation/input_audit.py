@@ -16,6 +16,31 @@ from vigil.ml.dataset.windowing import (
 AUDITED_FEATURE_CHANNELS = LOCKED_FEATURE_CHANNELS[:4]
 
 
+def validate_audit_metadata(
+    *,
+    dataset_name: str | None,
+    dataset_release: str | None,
+    manifest_id: str | None,
+    manifest_exclusions: int | None,
+) -> None:
+    """Validate explicitly supplied metadata without asserting manifest validation."""
+    for name, value in (
+        ("dataset_name", dataset_name),
+        ("dataset_release", dataset_release),
+        ("manifest_id", manifest_id),
+    ):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{name} must be a non-empty string when supplied.")
+    if manifest_exclusions is not None:
+        if isinstance(manifest_exclusions, bool) or not isinstance(manifest_exclusions, int):
+            raise TypeError("manifest_exclusions must be a non-negative integer when supplied.")
+        if manifest_exclusions < 0:
+            raise ValueError("manifest_exclusions must be a non-negative integer when supplied.")
+        raise ValueError(
+            "manifest_exclusions is unsupported until a validated manifest input is provided."
+        )
+
+
 @dataclass(frozen=True)
 class FeatureCoverage:
     """Observed and missing counts for one locked feature channel."""
@@ -112,7 +137,7 @@ class EvaluationInputAudit:
             f"- **Recordings**: {self.recording_count if self.recording_count is not None else 'not supplied'}",
             f"- **Manifest Exclusions**: {self.manifest_exclusions if self.manifest_exclusions is not None else 'not supplied'}",
             f"- **Malformed Input Rows**: {self.malformed_input_count}",
-            f"- **Synthetic Fixtures**: {('yes' if self.is_synthetic else 'no') if self.is_synthetic is not None else 'unknown'}",
+            f"- **Synthetic Fixtures**: {str(self.is_synthetic).lower() if self.is_synthetic is not None else 'unknown'}",
             "",
             "#### Feature Coverage",
             "| Channel | Valid | Missing | Valid Rate |",
@@ -164,6 +189,14 @@ def audit_evaluation_input(
     recording_ids: set[str] | None = None,
 ) -> EvaluationInputAudit:
     """Audit validated records using the same segmentation rules as extraction."""
+    if is_synthetic is not None and not isinstance(is_synthetic, bool):
+        raise TypeError("is_synthetic must be a boolean or None.")
+    validate_audit_metadata(
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
+    )
     if config is None:
         config = WindowConfig()
 
