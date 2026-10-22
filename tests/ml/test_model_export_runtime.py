@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -1374,6 +1376,49 @@ class TestModelComparison:
         assert report.baseline_full_report.total_samples == 80
         assert report.evaluation_metadata.evaluation_subjects == ["subject_held_out"]
         assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
+
+    def test_evaluate_recording_directory_rejects_invalid_json_with_location(
+        self, tmp_path: Path
+    ) -> None:
+        """Malformed JSON fails loudly with its source path and line number."""
+        recording_path = tmp_path / "samples.jsonl"
+        recording_path.write_text(
+            make_test_sample(frame_index=0).to_json() + "\n" + "{not-json}\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                rf"Invalid JSON in recording file '{re.escape(str(recording_path))}' "
+                r"at line 2"
+            ),
+        ):
+            evaluate_recording_directory(tmp_path, bundle_path=None)
+
+    def test_evaluate_recording_directory_rejects_invalid_record_with_location(
+        self, tmp_path: Path
+    ) -> None:
+        """Schema-invalid records fail loudly with their source path and line number."""
+        invalid_record = make_test_sample(frame_index=0).to_dict()
+        invalid_record.pop("session_id")
+        recording_path = tmp_path / "samples.jsonl"
+        recording_path.write_text(
+            make_test_sample(frame_index=0).to_json()
+            + "\n"
+            + json.dumps(invalid_record)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                rf"Invalid SampleRecord in recording file "
+                rf"'{re.escape(str(recording_path))}' at line 2"
+            ),
+        ):
+            evaluate_recording_directory(tmp_path, bundle_path=None)
 
 
 # ==============================================================================

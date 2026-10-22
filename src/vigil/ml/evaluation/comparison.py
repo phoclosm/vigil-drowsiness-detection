@@ -297,15 +297,22 @@ def evaluate_recording_directory(
     records: list[SampleRecord] = []
     for f in sample_files:
         with open(f, encoding="utf-8") as fh:
-            for line in fh:
+            for line_number, line in enumerate(fh, start=1):
                 line_str = line.strip()
                 if not line_str:
                     continue
                 try:
                     data = json.loads(line_str)
                     records.append(SampleRecord.from_dict(data))
-                except (json.JSONDecodeError, ValueError, KeyError):
-                    continue
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON in recording file '{f}' at line {line_number}: {exc}"
+                    ) from exc
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Invalid SampleRecord in recording file '{f}' at line "
+                        f"{line_number}: {exc}"
+                    ) from exc
 
     if not records:
         return None
