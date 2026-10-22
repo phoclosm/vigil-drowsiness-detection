@@ -63,14 +63,16 @@ third-party implementation or a paper citation.
 
 | Candidate | Authoritative source and verified facts | Access, license, consent/privacy | Labels and identifiers | Fit with this contract | Assessment |
 |---|---|---|---|---|---|
-| **UTA Real-Life Drowsiness Dataset (UTA-RLDD)** | [Official UTA-RLDD page](https://sites.google.com/view/utarldd/home) states approximately 30 hours of RGB video from 60 adult volunteers: 180 videos, one each for alertness, low vigilance, and drowsiness. It describes five subject folds and self-recorded phone/webcam videos. The [CVPRW paper](https://arxiv.org/abs/1904.07312) is the cited publication. | The official page describes voluntary/extra-credit participation and says that 36 participants permitted publication of faces, while identities are not provided. It does **not** state a standard dataset license, commercial-use permission, IRB/consent form availability, or a verified direct download link on the page. Contact with the maintainers is required before acquisition or redistribution. | The official page says labels are participant-provided predominant video labels: alert, low vigilant, and drowsy. It describes video-level labels, not frame-level labels. It identifies subjects for five folds; a recording/session identifier can likely be assigned locally, but that must be confirmed in the delivered files. | RGB video is not the eight-channel feature stream. M1-owned face/landmark extraction is required to derive ocular features. Alert maps plausibly to `ACTIVE`; low vigilant plausibly to `DROWSY`; “drowsy” may include severe fatigue but is not defensibly `SLEEPING` without an annotation rule. Ten-minute videos can support windows, but boundaries and frame timestamps must be generated and validated. | **Best candidate, not yet usable.** Requires written access/terms confirmation, privacy review, raw-file inventory, and a conservative label mapping that may exclude unsupported `SLEEPING` examples. |
-| **DROZY** | [Official GIPSA-lab dataset page](https://www.gipsa-lab.grenoble-inp.fr/~guillal/drozy/) was reachable as an identified official source but returned HTTP 403 to the reproducible source check. No dataset facts were treated as verified from that page in this assessment. | Download permission, license, consent/privacy terms, and current availability could not be verified because the official page denied access. | The source check did not establish the available annotation granularity or stable subject/session/recording identifiers. | No suitability claim is made until the official metadata and terms can be inspected. Any video-to-feature conversion would still require M1-owned landmark extraction and a mapping into all three canonical classes. | **Screened out pending source verification.** Do not download through mirrors or use it for a benchmark without confirming provenance and permission. |
-| **YawDD** | The historically cited [University of Ottawa source URL](https://www.site.uottawa.ca/~shervin/yawdd/) returned HTTP 404 during the source check. This establishes that the cited distribution URL is unavailable, not that the dataset no longer exists. | Current access, license, consent/privacy terms, and a legitimate replacement distribution page were not verified. | Subject/session identifiers, annotation granularity, and label semantics were not verified from an available authoritative source. | No contract-fit conclusion is possible. Yawning-focused data would not by itself establish the three canonical fatigue states or ocular channels. | **Not currently usable.** Locate and verify an authoritative replacement source before considering it. |
+| **UTA Real-Life Drowsiness Dataset (UTA-RLDD)** | [Official UTA-RLDD page](https://sites.google.com/view/utarldd/home) states approximately 30 hours of RGB video from 60 adult volunteers: 180 videos, one each for alertness, low vigilance, and drowsiness. It describes five subject folds and self-recorded phone/webcam videos. The [CVPRW paper](https://arxiv.org/abs/1904.07312) is the cited publication. | The official page publishes a [Google Drive folder link](https://drive.google.com/drive/folders/1d_QwgpMXnLY_FmLYXDn7TLcw0D-svXEl). A published link proves that a distribution route is advertised; it does **not** prove that this project can successfully download the files or use/redistribute them. The page describes voluntary/extra-credit participation and says that 36 participants permitted publication of faces, while identities are not provided. It does not state a standard dataset license, commercial-use permission, or complete consent/IRB documentation. | The official page says labels are participant-provided predominant video labels: alert, low vigilant, and drowsy. They are video-level, not frame-level, labels. It identifies subjects for five folds; delivered-file recording/session identifiers still need confirmation. | RGB video is not the eight-channel feature stream. M1-owned face/landmark extraction is required. Alert maps plausibly to `ACTIVE`; low vigilant plausibly to `DROWSY`; “drowsy” is not defensibly `SLEEPING` without an annotation rule. Ten-minute videos can support windows, but frame timestamps and label boundaries must be generated and audited. | **Strongest candidate, not yet approved or usable.** The published Drive route is promising, but successful access, terms, privacy approval, raw-file inventory, and conservative label mapping remain unresolved. |
+| **DROZY (ULg Multimodality Drowsiness Database)** | The [current official DROZY site](https://www.drozy.ulg.ac.be/) was identified but could not be retrieved in this environment because of a DNS/TLS transport failure. The [ULiège ORBi archive](https://orbi.uliege.be/handle/2268/191620) provides the dataset paper, and the [DROZY license agreement](https://orbi.uliege.be/bitstream/2268/191620/5/DROZY-LicenseAgreement-20180718.pdf) states that the database is downloadable from ORBi. The paper reports 14 healthy subjects (3 male, 11 female), about 500,000 frames, and approximately 283 GB. Modalities are synchronized KSS, PVT reaction-time data, PSG (5 EEG, 2 EOG, ECG, EMG), Kinect v2 NIR intensity/range images, and 68 facial landmarks per frame in 2D and 3D. | The agreement permits **research and evaluation only** and prohibits commercial product development. It prohibits redistribution in whole or part without prior written approval, database modification, and revealing subject identities. Images may only be displayed when marked publishable; required citation and Belgian-law terms also apply. Permission to extract and retain derived ocular features should be checked with ULg-INTELSIG under the agreement before processing; the agreement does not by itself establish this project's derivative-feature workflow. | KSS is a self-reported level-of-drowsiness score taken just before each PVT, not a frame-level `ACTIVE`/`DROWSY`/`SLEEPING` annotation. The paper describes three PVTs per subject and synchronized signals. It reports 720 manually landmark-annotated frames (about 51 per subject) plus automatic 68-landmark tracking for all frames. Stable subject/session IDs and the exact downloadable file layout still require an access-controlled inventory. | The landmarks can support ocular feature derivation without changing the M2 model interface, but M1-owned extraction or an approved equivalent is needed. KSS/PVT/PSG are useful supporting evidence, not an automatic three-class mapping. The 14-subject, sleep-deprivation protocol supports grouped sessions, but KSS granularity, sparse manual labels, identity restrictions, and no direct sleeping-class annotation prevent an unqualified three-class benchmark. | **Technically promising but legally and label-wise gated.** It is not directly suitable for a three-class benchmark without a defensible annotation protocol, explicit derived-feature permission, and an identity-safe manifest. |
+| **YawDD: Yawning Detection Dataset** | The current [IEEE DataPort record](https://doi.org/10.21227/e1qm-hb90) describes in-car-camera videos in natural/varying illumination. Set 1 has 322 videos covering normal driving, talking/singing, and yawning, with 3–4 videos per subject; set 2 has 29 subject videos containing all three activities. The record states that videos are unlabeled because yawning sequences are visually apparent. | The IEEE record is marked **Open Access**, but the page requires an IEEE DataPort login for access. Its metadata exposes a [CC BY 4.0 license link](https://creativecommons.org/licenses/by/4.0/); the exact record-level terms and any restrictions beyond that metadata should be confirmed after login. The participant-information file controls whether screenshots may be publicly shared for each video. No claim is made here about permission to redistribute raw videos or derive a new labeled database without checking the record terms. | The record describes activity/yawning content rather than drowsiness ground truth. Videos are explicitly unlabeled; subjects and video counts are described, but a project-ready frame/session manifest and annotation timestamps are not supplied by the page. | In-car video is a plausible M1 input source, but yawning is not equivalent to `DROWSY` or `SLEEPING`; talking/singing and silent driving are not canonical fatigue labels. Ocular channels would require M1-owned landmark extraction, and labels would require new protocol-based annotation with uncertain intervals excluded. | **Accessible in principle, not suitable as-is.** Login and exact terms must be verified, and substantial new annotation would be required. It cannot support a valid three-class evaluation merely because it contains yawning videos. |
 
 ### Recommendation
 
 Pursue UTA-RLDD first, but treat it as a gated candidate rather than an
-available dataset. Request from the dataset maintainers:
+approved dataset. The official page's Google Drive folder is evidence of a
+published distribution route, not evidence of successful access or permission
+for this project. Request from the UTA-RLDD maintainers:
 
 1. An approved download procedure and the governing license/terms, including
    research, commercial, redistribution, and derivative-feature permissions.
@@ -82,8 +84,14 @@ available dataset. Request from the dataset maintainers:
    to the M2 classes. Do not infer `SLEEPING` from the word “drowsy.”
 5. Any required citation, access agreement, or institutional review.
 
-Until those questions are answered and a label audit is completed, there is
-no legally and practically verified real-data evaluation set.
+Also contact ULiège/ULg-INTELSIG before using DROZY-derived features, and use
+the IEEE DataPort login and record terms to verify YawDD access and any
+participant-information restrictions. Across all three candidates, no source
+currently provides a verified, approved, frame-level three-class
+`ACTIVE`/`DROWSY`/`SLEEPING` evaluation set for this project. Until access,
+terms, consent/privacy review, feature permissions, and a label audit are
+complete, there is no legally and practically verified real-data evaluation
+set.
 
 ## 3. Required ingestion and manifest
 
@@ -227,9 +235,19 @@ must not be estimated from synthetic fixtures.
 ### Current blockers
 
 - No real labeled recordings are present in the repository or working tree.
-- UTA-RLDD access and license terms have not been verified for this project.
+- UTA-RLDD's published Drive folder has not been successfully accessed by this
+  project, and its license/terms remain unresolved.
 - UTA-RLDD's participant-provided video-level labels do not directly establish
   frame-level `ACTIVE`, `DROWSY`, and `SLEEPING` ground truth.
+- DROZY access through the current official domain could not be verified in this
+  environment, and its license requires research/evaluation-only use,
+  non-redistribution, no database modification, and no identity disclosure.
+- DROZY KSS/PVT/PSG evidence and landmarks do not automatically create the
+  required three frame-level canonical labels; derived-feature permission must
+  be checked.
+- YawDD requires IEEE DataPort login, is explicitly yawning-focused, and is
+  unlabeled. Exact record-level terms and permission for a new fatigue
+  annotation/derived-feature release remain to be verified.
 - A source-to-M2 feature extraction run has not been approved or executed.
 - No final-test manifest, label audit, or development provenance exists for a
   real dataset.
@@ -252,4 +270,3 @@ must not be estimated from synthetic fixtures.
    and bundle digests.
 
 No benchmark is valid until these prerequisites are complete.
-
