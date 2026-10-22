@@ -228,7 +228,18 @@ The run record must additionally preserve:
 - Accuracy, per-class and macro precision, per-class and macro recall, macro F1.
 - Canonical 3x3 confusion matrix with rows as truth and columns as prediction.
 - Missing-feature coverage: per-channel valid/missing counts or rates,
-  window-level usable/invalid counts, and baseline abstentions.
+  window-level feature-unusable quality flags, and baseline abstentions. The
+  `ModelComparisonReport.input_audit` artifact now supplies deterministic JSON
+  and Markdown input-quality summaries. Feature-unusable windows remain
+  eligible under the existing validity-mask contract; they are flagged rather
+  than silently excluded. Exact manifest exclusion totals still require a
+  supplied validated manifest.
+- The audit reports session partitions and temporal-gap breaks separately.
+  Standalone audit construction marks synthetic provenance as `unknown` unless
+  explicitly supplied; directory evaluation likewise requires an explicit
+  declaration and counts discovered recording files. Dataset/release metadata
+  are not inferred. Manifest-exclusion counts remain unsupported by
+  this iteration and are rejected unless a validated manifest input is added.
 - The synthetic-fixture flag must be false only for a verified real-data run.
 
 The existing `BaselineEvaluationReport` and `ModelComparisonReport` already

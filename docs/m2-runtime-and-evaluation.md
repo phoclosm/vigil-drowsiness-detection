@@ -315,6 +315,22 @@ report = evaluate_recording_directory(
 - Discovers session `.jsonl` files recursively (`**/samples.jsonl` or `*.jsonl`).
 - Returns `None` if the directory does not exist or contains no recordings.
 - **Never fabricates synthetic numbers as real performance.**
+- The returned report includes an `input_audit` with validated record/session
+  counts, per-channel validity coverage, deterministic candidate/accepted
+  window accounting, and reason-coded label exclusions. It also records
+  temporal-gap and insufficient-history segmentation diagnostics. Malformed
+  JSONL/schema rows fail before auditing with their source location; they are
+  not counted as exclusions. Manifest exclusion totals are populated only when
+  a validated manifest is supplied.
+- Standalone `audit_evaluation_input()` reports use `is_synthetic: "unknown"`
+  unless provenance is explicitly supplied. Directory evaluation also uses
+  `is_synthetic: "unknown"` unless its caller explicitly supplies `true` or
+  `false`, and records the discovered JSONL file count; dataset, release, and manifest identifier are optional explicit inputs and are never
+  inferred. Manifest-exclusion counts remain unsupported until a validated
+  manifest input is added; supplying a count is rejected. Directory contents
+  do not establish real-data provenance: `evaluate_recording_directory()` uses
+  `is_synthetic: "unknown"` unless the caller explicitly declares `true` or
+  `false`.
 
 ---
 

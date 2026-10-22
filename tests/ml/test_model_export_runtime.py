@@ -1163,6 +1163,8 @@ class TestModelComparison:
         assert report.gru_report is not None
         assert report.baseline_matched_report is not None
         assert report.baseline_full_report is not None
+        assert report.input_audit is not None
+        assert report.input_audit.windows.accepted_count == report.window_count
 
         # Verify serialization
         data = report.to_dict()
@@ -1170,6 +1172,7 @@ class TestModelComparison:
         assert "gru_model" in data
         assert "rule_baseline_matched" in data
         assert "rule_baseline_full" in data
+        assert data["input_audit"]["windows"]["accepted_count"] == report.window_count
         assert data["evaluation_metadata"] == {
             "development_strategy": "subject",
             "evaluation_subjects": ["subj_01", "subj_02", "subj_03"],
@@ -1183,6 +1186,7 @@ class TestModelComparison:
         assert "Synthetic Fixtures" in md
         assert "Macro F1" in md
         assert "Confusion Matrix" in md
+        assert "M2 Evaluation Input-Quality Audit" in md
 
     def test_compare_models_requires_training_provenance(self) -> None:
         """Evaluation cannot silently infer independence from an internal split."""
@@ -1265,6 +1269,35 @@ class TestModelComparison:
         assert report.evaluation_metadata.evaluation_subjects == ["subject_001"]
         assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
         assert not report.evaluation_metadata.secondary_split_performed
+        assert report.is_synthetic is None
+        assert report.input_audit is not None
+        assert report.input_audit.is_synthetic is None
+        assert report.to_dict()["is_synthetic"] == "unknown"
+        assert report.to_dict()["input_audit"]["is_synthetic"] == "unknown"
+        assert "Synthetic Fixtures**: unknown" in report.to_markdown()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error"),
+        [
+            ({"is_synthetic": "yes"}, TypeError),
+            ({"dataset_name": " "}, ValueError),
+            ({"dataset_release": ""}, ValueError),
+            ({"manifest_id": " "}, ValueError),
+            ({"manifest_exclusions": True}, TypeError),
+            ({"manifest_exclusions": -1}, ValueError),
+            ({"manifest_exclusions": 0}, ValueError),
+        ],
+    )
+    def test_compare_models_rejects_invalid_audit_metadata(
+        self, kwargs: dict[str, object], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error):
+            compare_models(
+                records=[],
+                model=None,  # type: ignore[arg-type]
+                normalizer=None,  # type: ignore[arg-type]
+                **kwargs,  # type: ignore[arg-type]
+            )
 
     def test_session_strategy_rejects_development_session_overlap(self) -> None:
         """Session fallback rejects evaluation sessions used in model development."""
@@ -1343,7 +1376,27 @@ class TestModelComparison:
         with pytest.raises(ValueError, match="A trained model bundle is required"):
             evaluate_recording_directory(tmp_path, bundle_path=None)
 
-    def test_evaluate_recording_directory_loads_root_file_once(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("kwargs", "error"),
+        [
+            ({"dataset_name": " "}, ValueError),
+            ({"dataset_release": ""}, ValueError),
+            ({"manifest_id": " "}, ValueError),
+            ({"manifest_exclusions": True}, TypeError),
+            ({"manifest_exclusions": -1}, ValueError),
+            ({"manifest_exclusions": 0}, ValueError),
+        ],
+    )
+    def test_evaluate_recording_directory_rejects_invalid_audit_metadata(
+        self, tmp_path: Path, kwargs: dict[str, object], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error):
+            evaluate_recording_directory(tmp_path / "missing", **kwargs)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("is_synthetic", [None, True, False])
+    def test_evaluate_recording_directory_loads_root_file_once(
+        self, tmp_path: Path, is_synthetic: bool | None
+    ) -> None:
         """Root-level samples.jsonl is discovered once, not once per glob pattern."""
         model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
         model.training_provenance = {  # type: ignore[attr-defined]
@@ -1369,11 +1422,27 @@ class TestModelComparison:
             encoding="utf-8",
         )
 
-        report = evaluate_recording_directory(tmp_path, bundle_path=bundle_path)
+        report = evaluate_recording_directory(
+            tmp_path,
+            bundle_path=bundle_path,
+            is_synthetic=is_synthetic,
+        )
 
         assert report is not None
         assert report.window_count > 0
         assert report.baseline_full_report.total_samples == 80
+        assert report.input_audit is not None
+        assert report.input_audit.recording_count == 1
+        assert report.input_audit.windows.accepted_count == report.window_count
+        assert report.is_synthetic is is_synthetic
+        assert report.input_audit.is_synthetic is is_synthetic
+        expected_provenance = is_synthetic if is_synthetic is not None else "unknown"
+        assert report.to_dict()["is_synthetic"] == expected_provenance
+        assert report.to_dict()["input_audit"]["is_synthetic"] == expected_provenance
+        expected_markdown_provenance = (
+            str(is_synthetic).lower() if is_synthetic is not None else "unknown"
+        )
+        assert f"Synthetic Fixtures**: {expected_markdown_provenance}" in report.to_markdown()
         assert report.evaluation_metadata.evaluation_subjects == ["subject_held_out"]
         assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
 

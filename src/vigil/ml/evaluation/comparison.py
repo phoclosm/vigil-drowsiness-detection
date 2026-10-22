@@ -17,6 +17,11 @@ from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
 from vigil.ml.dataset.windowing import extract_windows
+from vigil.ml.evaluation.input_audit import (
+    EvaluationInputAudit,
+    audit_evaluation_input,
+    validate_audit_metadata,
+)
 from vigil.ml.models.export import LoadedModelBundle, load_model_bundle
 from vigil.ml.models.gru import GRUTemporalClassifier
 from vigil.ml.provenance import (
@@ -69,18 +74,22 @@ class ModelComparisonReport:
     baseline_full_report: BaselineEvaluationReport
     evaluation_metadata: IndependentEvaluationMetadata
     window_count: int
-    is_synthetic: bool = False
+    is_synthetic: bool | None = None
+    input_audit: EvaluationInputAudit | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the comparative report into a nested dictionary."""
-        return {
-            "is_synthetic": self.is_synthetic,
+        result = {
+            "is_synthetic": self.is_synthetic if self.is_synthetic is not None else "unknown",
             "window_count": self.window_count,
             "gru_model": self.gru_report.to_dict(),
             "rule_baseline_matched": self.baseline_matched_report.to_dict(),
             "rule_baseline_full": self.baseline_full_report.to_dict(),
             "evaluation_metadata": self.evaluation_metadata.to_dict(),
         }
+        if self.input_audit is not None:
+            result["input_audit"] = self.input_audit.to_dict()
+        return result
 
     def to_markdown(self) -> str:
         """Render a formatted markdown comparison table."""
@@ -89,7 +98,7 @@ class ModelComparisonReport:
             "",
         ]
 
-        if self.is_synthetic:
+        if self.is_synthetic is True:
             lines.extend([
                 "> [!IMPORTANT]",
                 (
@@ -107,6 +116,7 @@ class ModelComparisonReport:
             f"- **Independent Evaluation Sessions**: {self.evaluation_metadata.evaluation_sessions}",
             "- **Secondary Train/Validation Split**: No",
             f"- **Evaluated Windows ($W=60$)**: {self.window_count}",
+            f"- **Synthetic Fixtures**: {str(self.is_synthetic).lower() if self.is_synthetic is not None else 'unknown'}",
             "",
             "#### Head-to-Head Performance Comparison",
             "| Metric | Learned GRU (Windows) | Rule Baseline (Matched Timesteps) | Rule Baseline (All Frames) |",
@@ -133,6 +143,9 @@ class ModelComparisonReport:
             f"| **SLEEPING (2)** | {self.baseline_matched_report.confusion_matrix[2][0]} | {self.baseline_matched_report.confusion_matrix[2][1]} | {self.baseline_matched_report.confusion_matrix[2][2]} |",
         ])
 
+        if self.input_audit is not None:
+            lines.extend(["", self.input_audit.to_markdown()])
+
         return "\n".join(lines)
 
 
@@ -143,8 +156,13 @@ def compare_models(
     baseline_classifier: RuleBasedBaseline | None = None,
     train_ratio: float = 0.75,
     seed: int = 42,
-    is_synthetic: bool = False,
+    is_synthetic: bool | None = None,
     training_provenance: dict[str, Any] | None = None,
+    recording_ids: set[str] | None = None,
+    dataset_name: str | None = None,
+    dataset_release: str | None = None,
+    manifest_id: str | None = None,
+    manifest_exclusions: int | None = None,
 ) -> ModelComparisonReport:
     """Compare a learned GRU and D3 rule baseline on an independent evaluation set.
 
@@ -170,6 +188,14 @@ def compare_models(
         ImportError: If PyTorch is unavailable.
         ValueError: If records are empty or partitions lack usable evaluation windows.
     """
+    validate_audit_metadata(
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
+    )
+    if is_synthetic is not None and not isinstance(is_synthetic, bool):
+        raise TypeError("is_synthetic must be a boolean or None.")
     if not HAS_TORCH or torch is None:
         raise ImportError("PyTorch is required for model comparison. Install it with 'pip install torch'.")
 
@@ -255,6 +281,15 @@ def compare_models(
         evaluation_subjects=sorted({record.subject_id for record in records}),
         evaluation_sessions=sorted({record.session_id for record in records}),
     )
+    input_audit = audit_evaluation_input(
+        records,
+        is_synthetic=is_synthetic,
+        recording_ids=recording_ids,
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
+    )
 
     return ModelComparisonReport(
         gru_report=gru_report,
@@ -263,12 +298,19 @@ def compare_models(
         evaluation_metadata=evaluation_metadata,
         window_count=len(evaluation_windows),
         is_synthetic=is_synthetic,
+        input_audit=input_audit,
     )
 
 
 def evaluate_recording_directory(
     directory_path: str | Path,
     bundle_path: str | Path | LoadedModelBundle | None = None,
+    *,
+    is_synthetic: bool | None = None,
+    dataset_name: str | None = None,
+    dataset_release: str | None = None,
+    manifest_id: str | None = None,
+    manifest_exclusions: int | None = None,
 ) -> ModelComparisonReport | None:
     """Evaluate and compare models on recordings located in a directory.
 
@@ -282,6 +324,14 @@ def evaluate_recording_directory(
     Returns:
         ModelComparisonReport if valid sessions exist, else None.
     """
+    validate_audit_metadata(
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
+    )
+    if is_synthetic is not None and not isinstance(is_synthetic, bool):
+        raise TypeError("is_synthetic must be a boolean or None.")
     dir_path = Path(directory_path)
     if not dir_path.exists():
         return None
@@ -330,5 +380,10 @@ def evaluate_recording_directory(
         model=bundle.model,
         normalizer=bundle.normalizer,
         training_provenance=bundle.metadata.get("training_provenance"),
-        is_synthetic=False,
+        is_synthetic=is_synthetic,
+        recording_ids={path.as_posix() for path in sample_files},
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
     )
