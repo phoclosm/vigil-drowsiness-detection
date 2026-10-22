@@ -9,13 +9,13 @@ report model-quality results.
 
 No real dataset is currently verified as ready for evaluation in this
 repository. The UTA Real-Life Drowsiness Dataset (UTA-RLDD) is the strongest
-candidate found, because its official page describes 60 subjects, 180 RGB
-videos, three drowsiness conditions, subject folds, and a public research
-contact. However, the page does not state a standard open-source license or
-provide a verified direct download workflow, and its labels are
-participant-provided predominant video labels rather than frame-level
-annotations. Access, terms of use, consent/privacy conditions, and an
-annotation conversion protocol must therefore be confirmed with the
+candidate found, and its official page publishes a Google Drive distribution
+link. That published link does not establish that this project has
+successfully downloaded or accessed the data, or that its use is authorized.
+License and permitted-use terms, privacy/consent requirements, and suitable
+frame-level `ACTIVE`/`DROWSY`/`SLEEPING` labels remain unresolved. The page's
+participant-provided predominant video labels are not frame-level annotations,
+so access and an annotation conversion protocol must be confirmed with the
 maintainers before any data is acquired or evaluated.
 
 The repository contains no real recordings. Synthetic fixtures must not be
