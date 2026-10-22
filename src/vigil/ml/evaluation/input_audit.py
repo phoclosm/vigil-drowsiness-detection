@@ -100,6 +100,14 @@ class EvaluationInputAudit:
     dataset_release: str | None = None
     manifest_id: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.manifest_exclusions is not None:
+            raise ValueError(
+                "manifest_exclusions is unsupported until a validated manifest input is provided."
+            )
+        if self.is_synthetic is not None and not isinstance(self.is_synthetic, bool):
+            raise TypeError("is_synthetic must be a boolean or None.")
+
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "record_count": self.record_count,

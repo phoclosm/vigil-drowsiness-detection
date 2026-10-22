@@ -1393,7 +1393,10 @@ class TestModelComparison:
         with pytest.raises(error):
             evaluate_recording_directory(tmp_path / "missing", **kwargs)  # type: ignore[arg-type]
 
-    def test_evaluate_recording_directory_loads_root_file_once(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("is_synthetic", [None, True, False])
+    def test_evaluate_recording_directory_loads_root_file_once(
+        self, tmp_path: Path, is_synthetic: bool | None
+    ) -> None:
         """Root-level samples.jsonl is discovered once, not once per glob pattern."""
         model = GRUTemporalClassifier(GRUConfig(input_dim=8, hidden_dim=16, num_classes=3))
         model.training_provenance = {  # type: ignore[attr-defined]
@@ -1419,7 +1422,11 @@ class TestModelComparison:
             encoding="utf-8",
         )
 
-        report = evaluate_recording_directory(tmp_path, bundle_path=bundle_path)
+        report = evaluate_recording_directory(
+            tmp_path,
+            bundle_path=bundle_path,
+            is_synthetic=is_synthetic,
+        )
 
         assert report is not None
         assert report.window_count > 0
@@ -1427,10 +1434,15 @@ class TestModelComparison:
         assert report.input_audit is not None
         assert report.input_audit.recording_count == 1
         assert report.input_audit.windows.accepted_count == report.window_count
-        assert report.is_synthetic is False
-        assert report.input_audit.is_synthetic is False
-        assert report.to_dict()["is_synthetic"] is False
-        assert report.to_dict()["input_audit"]["is_synthetic"] is False
+        assert report.is_synthetic is is_synthetic
+        assert report.input_audit.is_synthetic is is_synthetic
+        expected_provenance = is_synthetic if is_synthetic is not None else "unknown"
+        assert report.to_dict()["is_synthetic"] == expected_provenance
+        assert report.to_dict()["input_audit"]["is_synthetic"] == expected_provenance
+        expected_markdown_provenance = (
+            str(is_synthetic).lower() if is_synthetic is not None else "unknown"
+        )
+        assert f"Synthetic Fixtures**: {expected_markdown_provenance}" in report.to_markdown()
         assert report.evaluation_metadata.evaluation_subjects == ["subject_held_out"]
         assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
 

@@ -7,7 +7,7 @@ import pytest
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import WindowConfig
 from vigil.ml.dataset.windowing import extract_windows
-from vigil.ml.evaluation.input_audit import audit_evaluation_input
+from vigil.ml.evaluation.input_audit import EvaluationInputAudit, audit_evaluation_input
 
 
 def make_record(
@@ -129,6 +129,19 @@ def test_unprovenanced_audit_serializes_unknown_not_false() -> None:
 
     assert audit.to_dict()["is_synthetic"] == "unknown"
     assert "Synthetic Fixtures**: unknown" in audit.to_markdown()
+
+
+def test_direct_audit_construction_rejects_manifest_exclusions() -> None:
+    with pytest.raises(ValueError, match="manifest_exclusions is unsupported"):
+        EvaluationInputAudit(
+            record_count=0,
+            unique_subjects=[],
+            unique_sessions=[],
+            recording_count=None,
+            feature_coverage={},
+            windows=None,  # type: ignore[arg-type]
+            manifest_exclusions=0,
+        )
 
 
 @pytest.mark.parametrize(

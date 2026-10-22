@@ -236,9 +236,9 @@ The run record must additionally preserve:
   supplied validated manifest.
 - The audit reports session partitions and temporal-gap breaks separately.
   Standalone audit construction marks synthetic provenance as `unknown` unless
-  explicitly supplied; directory evaluation marks its validated recording
-  input as non-synthetic and counts discovered recording files. Dataset/release
-  metadata are not inferred. Manifest-exclusion counts remain unsupported by
+  explicitly supplied; directory evaluation likewise requires an explicit
+  declaration and counts discovered recording files. Dataset/release metadata
+  are not inferred. Manifest-exclusion counts remain unsupported by
   this iteration and are rejected unless a validated manifest input is added.
 - The synthetic-fixture flag must be false only for a verified real-data run.
 

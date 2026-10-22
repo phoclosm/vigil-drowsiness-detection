@@ -306,6 +306,7 @@ def evaluate_recording_directory(
     directory_path: str | Path,
     bundle_path: str | Path | LoadedModelBundle | None = None,
     *,
+    is_synthetic: bool | None = None,
     dataset_name: str | None = None,
     dataset_release: str | None = None,
     manifest_id: str | None = None,
@@ -329,6 +330,8 @@ def evaluate_recording_directory(
         manifest_id=manifest_id,
         manifest_exclusions=manifest_exclusions,
     )
+    if is_synthetic is not None and not isinstance(is_synthetic, bool):
+        raise TypeError("is_synthetic must be a boolean or None.")
     dir_path = Path(directory_path)
     if not dir_path.exists():
         return None
@@ -377,7 +380,7 @@ def evaluate_recording_directory(
         model=bundle.model,
         normalizer=bundle.normalizer,
         training_provenance=bundle.metadata.get("training_provenance"),
-        is_synthetic=False,
+        is_synthetic=is_synthetic,
         recording_ids={path.as_posix() for path in sample_files},
         dataset_name=dataset_name,
         dataset_release=dataset_release,
