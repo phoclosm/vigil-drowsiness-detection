@@ -25,7 +25,13 @@ jobs:
       - run: python -m compileall -q src
       - name: Verify real vision backend
         if: matrix.environment == 'desktop'
-        run: python -c "from vigil.runtime.landmarks import MediaPipeFaceLandmarkDetector; detector = MediaPipeFaceLandmarkDetector(); detector.close()"
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from vigil.runtime.landmarks import MediaPipeFaceLandmarkDetector
+          with MediaPipeFaceLandmarkDetector() as detector:
+              assert detector.detect(np.zeros((100, 100, 3), dtype=np.uint8)) == ()
+          PY
       - name: Verify OpenCV 5 version
         if: matrix.environment == 'opencv5'
         run: python -c "import cv2; assert cv2.__version__ == '5.0.0', cv2.__version__"

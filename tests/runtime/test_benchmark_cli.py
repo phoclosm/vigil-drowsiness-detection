@@ -122,6 +122,7 @@ def test_main_prints_only_returned_measurements(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Source: webcam device 0" in captured.out
+    assert "OpenCV version:" in captured.out
     assert "Requested frame limit: 1" in captured.out
     assert "Measured FPS: 20.000" in captured.out
 

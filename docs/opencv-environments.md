@@ -45,3 +45,26 @@ separately reviewed landmark-backend migration with evidence that the existing
 feature contract is preserved. No cloud dependencies or services are added here.
 CI tests both environments on Python 3.10 and 3.12; real camera/display checks
 remain manual. Version telemetry reports the imported runtime, not a benchmark.
+
+## Local verification on October 23
+
+Windows, Python 3.12.0, separate freshly created virtual environments:
+
+| Environment | Imported cv2 | NumPy | Full suite |
+| --- | --- | --- | --- |
+| desktop | 4.11.0 | 1.26.4 | 393 passed |
+| opencv5 | 5.0.0 (wheel 5.0.0.93) | 2.5.4 | 393 passed |
+
+Both environments passed `pip check`, Ruff 0.8.4, and `compileall -q src`.
+The desktop backend initialized, processed a synthetic blank frame with no
+detected faces, and closed successfully. This is a dependency/lifecycle check,
+not evidence of face-detection accuracy or real-camera performance.
+The OpenCV smoke checks exercise BGR-to-RGB conversion and text drawing without
+a camera or display. CLI tests verify that version telemetry is emitted.
+
+The first desktop installation attempt hit a certificate-chain error while
+fetching setuptools; a subsequent ordinary retry succeeded with certificate
+verification still enabled. New Ruff defaults exposed unrelated legacy lint
+findings; development dependencies now pin the previously used Ruff 0.8.4.
+Python 3.10 was unavailable locally. GitHub Actions results remain unverified
+until this branch is pushed and its workflow executes.

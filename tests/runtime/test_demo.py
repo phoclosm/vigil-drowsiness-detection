@@ -283,6 +283,7 @@ def test_main_reports_completion_without_performance_claims(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Source: webcam device 0" in captured.out
+    assert "OpenCV version:" in captured.out
     assert "Frames processed: 12" in captured.out
     assert "Stop reason: frame_limit" in captured.out
     assert "FPS" not in captured.out
