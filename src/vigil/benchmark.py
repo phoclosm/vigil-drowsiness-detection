@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from vigil.runtime.capture import CaptureConfig, CaptureError, CaptureStream
+from vigil.runtime.environment import opencv_version
 from vigil.runtime.eye_features import EyeFeatureStream, EyeFeatureStreamConfig
 from vigil.runtime.landmarks import LandmarkError, MediaPipeFaceLandmarkDetector
 from vigil.runtime.performance import (
@@ -117,6 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     print(f"Source: {config.source_label}")
+    print(f"OpenCV version: {opencv_version()}")
     print(f"Requested frame limit: {args.frames}")
     print(format_benchmark_result(result))
     return 0
