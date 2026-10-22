@@ -40,7 +40,7 @@ From PowerShell:
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,ml]"
+python -m pip install -e ".[desktop,dev,ml]"
 ```
 
 If `py` is unavailable, use a working `python` or `python3` command instead.
