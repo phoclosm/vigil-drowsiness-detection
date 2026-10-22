@@ -6,11 +6,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from vigil.ml.data.schema import FatigueLabel, SampleRecord
+from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, WindowConfig
 from vigil.ml.dataset.windowing import (
-    _iter_continuous_segments,
     build_sample_feature_vector,
+    enumerate_window_candidates,
 )
 
 AUDITED_FEATURE_CHANNELS = LOCKED_FEATURE_CHANNELS[:4]
@@ -41,7 +41,7 @@ class WindowAudit:
     excluded_count: int
     exclusion_reasons: dict[str, int]
     insufficient_history_segments: int
-    session_boundary_count: int
+    session_partition_count: int
     temporal_gap_breaks: int
     feature_unusable_windows: int
 
@@ -52,7 +52,7 @@ class WindowAudit:
             "excluded_count": self.excluded_count,
             "exclusion_reasons": dict(sorted(self.exclusion_reasons.items())),
             "insufficient_history_segments": self.insufficient_history_segments,
-            "session_boundary_count": self.session_boundary_count,
+            "session_partition_count": self.session_partition_count,
             "temporal_gap_breaks": self.temporal_gap_breaks,
             "feature_unusable_windows": self.feature_unusable_windows,
         }
@@ -70,7 +70,7 @@ class EvaluationInputAudit:
     windows: WindowAudit
     manifest_exclusions: int | None = None
     malformed_input_count: int = 0
-    is_synthetic: bool = False
+    is_synthetic: bool | None = None
     dataset_name: str | None = None
     dataset_release: str | None = None
     manifest_id: str | None = None
@@ -89,7 +89,7 @@ class EvaluationInputAudit:
             "windows": self.windows.to_dict(),
             "manifest_exclusions": self.manifest_exclusions,
             "malformed_input_count": self.malformed_input_count,
-            "is_synthetic": self.is_synthetic,
+            "is_synthetic": self.is_synthetic if self.is_synthetic is not None else "unknown",
         }
         optional = {
             "dataset_name": self.dataset_name,
@@ -112,7 +112,7 @@ class EvaluationInputAudit:
             f"- **Recordings**: {self.recording_count if self.recording_count is not None else 'not supplied'}",
             f"- **Manifest Exclusions**: {self.manifest_exclusions if self.manifest_exclusions is not None else 'not supplied'}",
             f"- **Malformed Input Rows**: {self.malformed_input_count}",
-            f"- **Synthetic Fixtures**: {'yes' if self.is_synthetic else 'no'}",
+            f"- **Synthetic Fixtures**: {('yes' if self.is_synthetic else 'no') if self.is_synthetic is not None else 'unknown'}",
             "",
             "#### Feature Coverage",
             "| Channel | Valid | Missing | Valid Rate |",
@@ -131,7 +131,7 @@ class EvaluationInputAudit:
             f"- **Accepted Windows**: {self.windows.accepted_count}",
             f"- **Excluded Candidate Windows**: {self.windows.excluded_count}",
             f"- **Insufficient-History Segments**: {self.windows.insufficient_history_segments}",
-            f"- **Session Partitions**: {self.windows.session_boundary_count}",
+            f"- **Session Partitions**: {self.windows.session_partition_count}",
             f"- **Temporal Gap Breaks**: {self.windows.temporal_gap_breaks}",
             f"- **Feature-Unusable Window Flags**: {self.windows.feature_unusable_windows}",
             "",
@@ -156,7 +156,7 @@ def audit_evaluation_input(
     records: list[SampleRecord],
     config: WindowConfig | None = None,
     *,
-    is_synthetic: bool = False,
+    is_synthetic: bool | None = None,
     dataset_name: str | None = None,
     dataset_release: str | None = None,
     manifest_id: str | None = None,
@@ -173,36 +173,27 @@ def audit_evaluation_input(
         for name, value in zip(AUDITED_FEATURE_CHANNELS, features[4:]):
             coverage_counts[name][0 if value == 1.0 else 1] += 1
 
-    segments, temporal_gap_breaks = _iter_continuous_segments(records, config)
-    candidate_count = 0
+    candidates, insufficient_segments, temporal_gap_breaks, session_partition_count = (
+        enumerate_window_candidates(records, config)
+    )
+    candidate_count = len(candidates)
     accepted_count = 0
     feature_unusable_windows = 0
     exclusion_reasons: dict[str, int] = {}
-    insufficient_segments = 0
 
-    for _, _, segment in segments:
-        if len(segment) < config.window_length:
-            insufficient_segments += 1
+    for candidate in candidates:
+        window_features = [
+            build_sample_feature_vector(record)
+            for record in candidate.records
+        ]
+        if all(all(row[index] == 0.0 for row in window_features) for index in (4, 5, 7)):
+            feature_unusable_windows += 1
+        if candidate.rejection_reason is not None:
+            exclusion_reasons[candidate.rejection_reason] = (
+                exclusion_reasons.get(candidate.rejection_reason, 0) + 1
+            )
             continue
-        candidate_count += (len(segment) - config.window_length) // config.stride + 1
-        for start in range(0, len(segment) - config.window_length + 1, config.stride):
-            window = segment[start : start + config.window_length]
-            window_features = [build_sample_feature_vector(record) for record in window]
-            if all(all(row[index] == 0.0 for row in window_features) for index in (4, 5, 7)):
-                feature_unusable_windows += 1
-            if any(record.label_id == FatigueLabel.AMBIGUOUS for record in window):
-                exclusion_reasons["ambiguous_label"] = exclusion_reasons.get("ambiguous_label", 0) + 1
-                continue
-            if window[-1].label_id not in (
-                FatigueLabel.ACTIVE,
-                FatigueLabel.DROWSY,
-                FatigueLabel.SLEEPING,
-            ):
-                exclusion_reasons["noncanonical_target"] = (
-                    exclusion_reasons.get("noncanonical_target", 0) + 1
-                )
-                continue
-            accepted_count += 1
+        accepted_count += 1
 
     return EvaluationInputAudit(
         record_count=len(records),
@@ -223,7 +214,7 @@ def audit_evaluation_input(
             excluded_count=candidate_count - accepted_count,
             exclusion_reasons=exclusion_reasons,
             insufficient_history_segments=insufficient_segments,
-            session_boundary_count=len({record.session_id for record in records}),
+            session_partition_count=session_partition_count,
             temporal_gap_breaks=temporal_gap_breaks,
             feature_unusable_windows=feature_unusable_windows,
         ),

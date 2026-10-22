@@ -234,6 +234,11 @@ The run record must additionally preserve:
   eligible under the existing validity-mask contract; they are flagged rather
   than silently excluded. Exact manifest exclusion totals still require a
   supplied validated manifest.
+- The audit reports session partitions and temporal-gap breaks separately.
+  Standalone audit construction marks synthetic provenance as `unknown` unless
+  explicitly supplied; directory evaluation marks its validated recording
+  input as non-synthetic and counts discovered recording files. Dataset/release
+  metadata and manifest exclusion counts are not inferred.
 - The synthetic-fixture flag must be false only for a verified real-data run.
 
 The existing `BaselineEvaluationReport` and `ModelComparisonReport` already

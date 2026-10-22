@@ -1163,6 +1163,8 @@ class TestModelComparison:
         assert report.gru_report is not None
         assert report.baseline_matched_report is not None
         assert report.baseline_full_report is not None
+        assert report.input_audit is not None
+        assert report.input_audit.windows.accepted_count == report.window_count
 
         # Verify serialization
         data = report.to_dict()
@@ -1170,6 +1172,7 @@ class TestModelComparison:
         assert "gru_model" in data
         assert "rule_baseline_matched" in data
         assert "rule_baseline_full" in data
+        assert data["input_audit"]["windows"]["accepted_count"] == report.window_count
         assert data["evaluation_metadata"] == {
             "development_strategy": "subject",
             "evaluation_subjects": ["subj_01", "subj_02", "subj_03"],
@@ -1183,6 +1186,7 @@ class TestModelComparison:
         assert "Synthetic Fixtures" in md
         assert "Macro F1" in md
         assert "Confusion Matrix" in md
+        assert "M2 Evaluation Input-Quality Audit" in md
 
     def test_compare_models_requires_training_provenance(self) -> None:
         """Evaluation cannot silently infer independence from an internal split."""
@@ -1374,6 +1378,9 @@ class TestModelComparison:
         assert report is not None
         assert report.window_count > 0
         assert report.baseline_full_report.total_samples == 80
+        assert report.input_audit is not None
+        assert report.input_audit.recording_count == 1
+        assert report.input_audit.windows.accepted_count == report.window_count
         assert report.evaluation_metadata.evaluation_subjects == ["subject_held_out"]
         assert report.evaluation_metadata.evaluation_sessions == ["held_out_session"]
 

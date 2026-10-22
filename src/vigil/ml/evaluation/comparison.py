@@ -153,6 +153,11 @@ def compare_models(
     seed: int = 42,
     is_synthetic: bool = False,
     training_provenance: dict[str, Any] | None = None,
+    recording_ids: set[str] | None = None,
+    dataset_name: str | None = None,
+    dataset_release: str | None = None,
+    manifest_id: str | None = None,
+    manifest_exclusions: int | None = None,
 ) -> ModelComparisonReport:
     """Compare a learned GRU and D3 rule baseline on an independent evaluation set.
 
@@ -263,7 +268,15 @@ def compare_models(
         evaluation_subjects=sorted({record.subject_id for record in records}),
         evaluation_sessions=sorted({record.session_id for record in records}),
     )
-    input_audit = audit_evaluation_input(records, is_synthetic=is_synthetic)
+    input_audit = audit_evaluation_input(
+        records,
+        is_synthetic=is_synthetic,
+        recording_ids=recording_ids,
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
+    )
 
     return ModelComparisonReport(
         gru_report=gru_report,
@@ -279,6 +292,11 @@ def compare_models(
 def evaluate_recording_directory(
     directory_path: str | Path,
     bundle_path: str | Path | LoadedModelBundle | None = None,
+    *,
+    dataset_name: str | None = None,
+    dataset_release: str | None = None,
+    manifest_id: str | None = None,
+    manifest_exclusions: int | None = None,
 ) -> ModelComparisonReport | None:
     """Evaluate and compare models on recordings located in a directory.
 
@@ -293,6 +311,17 @@ def evaluate_recording_directory(
         ModelComparisonReport if valid sessions exist, else None.
     """
     dir_path = Path(directory_path)
+    if manifest_exclusions is not None and (
+        not isinstance(manifest_exclusions, int) or manifest_exclusions < 0
+    ):
+        raise ValueError("manifest_exclusions must be a non-negative integer when supplied.")
+    for name, value in (
+        ("dataset_name", dataset_name),
+        ("dataset_release", dataset_release),
+        ("manifest_id", manifest_id),
+    ):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{name} must be a non-empty string when supplied.")
     if not dir_path.exists():
         return None
 
@@ -341,4 +370,9 @@ def evaluate_recording_directory(
         normalizer=bundle.normalizer,
         training_provenance=bundle.metadata.get("training_provenance"),
         is_synthetic=False,
+        recording_ids={path.as_posix() for path in sample_files},
+        dataset_name=dataset_name,
+        dataset_release=dataset_release,
+        manifest_id=manifest_id,
+        manifest_exclusions=manifest_exclusions,
     )

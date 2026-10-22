@@ -124,6 +124,43 @@ class WindowSample:
             )
 
 
+@dataclass(frozen=True)
+class WindowCandidate:
+    """A candidate window and its canonical eligibility decision."""
+
+    session_id: str
+    records: list[SampleRecord]
+    rejection_reason: str | None
+
+
+def enumerate_window_candidates(
+    records: list[SampleRecord],
+    config: WindowConfig | None = None,
+) -> tuple[list[WindowCandidate], int, int, int]:
+    """Enumerate all candidates using production temporal and label rules."""
+    if config is None:
+        config = WindowConfig()
+    segments, temporal_gap_breaks = _iter_continuous_segments(records, config)
+    candidates: list[WindowCandidate] = []
+    insufficient_history_segments = 0
+
+    for session_id, _, segment in segments:
+        if len(segment) < config.window_length:
+            insufficient_history_segments += 1
+            continue
+        for start_idx in range(0, len(segment) - config.window_length + 1, config.stride):
+            window_slice = segment[start_idx : start_idx + config.window_length]
+            reason = (
+                "ambiguous_label"
+                if any(record.label_id == FatigueLabel.AMBIGUOUS for record in window_slice)
+                else None
+            )
+            candidates.append(WindowCandidate(session_id, window_slice, reason))
+
+    session_partition_count = len({session_id for session_id, _, _ in segments})
+    return candidates, insufficient_history_segments, temporal_gap_breaks, session_partition_count
+
+
 def build_sample_feature_vector(
     sample: SampleRecord,
     normalizer: FeatureNormalizer | None = None,
@@ -208,50 +245,29 @@ def extract_windows(
         return []
 
     extracted_windows: list[WindowSample] = []
-    segments, _ = _iter_continuous_segments(records, config)
+    candidates, _, _, _ = enumerate_window_candidates(records, config)
 
-    for session_id, _, segment in segments:
-        seg_len = len(segment)
-        if seg_len < config.window_length:
-            # Emit no windows if segment is shorter than W
+    for candidate in candidates:
+        if candidate.rejection_reason is not None:
             continue
-
-        for start_idx in range(0, seg_len - config.window_length + 1, config.stride):
-            window_slice = segment[start_idx : start_idx + config.window_length]
-
-            # Invariant: Discard windows that overlap any AMBIGUOUS annotation
-            if any(r.label_id == FatigueLabel.AMBIGUOUS for r in window_slice):
-                continue
-
-            # Final sample alignment
-            final_sample = window_slice[-1]
-            target_label_id = final_sample.label_id
-
-            if target_label_id not in (
-                FatigueLabel.ACTIVE,
-                FatigueLabel.DROWSY,
-                FatigueLabel.SLEEPING,
-            ):
-                # Target must be a canonical class
-                continue
-
-            # Construct (60, 8) feature matrix
-            feature_matrix: list[list[float]] = []
-            for sample in window_slice:
-                feature_matrix.append(build_sample_feature_vector(sample, normalizer))
-
-            first_sample = window_slice[0]
-            extracted_windows.append(
-                WindowSample(
-                    features=feature_matrix,
-                    target=int(target_label_id),
-                    subject_id=final_sample.subject_id,
-                    session_id=session_id,
-                    start_frame_index=first_sample.frame_index,
-                    end_frame_index=final_sample.frame_index,
-                    start_timestamp_ms=first_sample.timestamp_ms,
-                    end_timestamp_ms=final_sample.timestamp_ms,
-                )
+        window_slice = candidate.records
+        final_sample = window_slice[-1]
+        feature_matrix = [
+            build_sample_feature_vector(sample, normalizer)
+            for sample in window_slice
+        ]
+        first_sample = window_slice[0]
+        extracted_windows.append(
+            WindowSample(
+                features=feature_matrix,
+                target=int(final_sample.label_id),
+                subject_id=final_sample.subject_id,
+                session_id=candidate.session_id,
+                start_frame_index=first_sample.frame_index,
+                end_frame_index=final_sample.frame_index,
+                start_timestamp_ms=first_sample.timestamp_ms,
+                end_timestamp_ms=final_sample.timestamp_ms,
             )
+        )
 
     return extracted_windows

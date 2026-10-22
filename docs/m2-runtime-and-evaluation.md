@@ -322,6 +322,11 @@ report = evaluate_recording_directory(
   JSONL/schema rows fail before auditing with their source location; they are
   not counted as exclusions. Manifest exclusion totals are populated only when
   a validated manifest is supplied.
+- Standalone `audit_evaluation_input()` reports use `is_synthetic: "unknown"`
+  unless provenance is explicitly supplied. Directory evaluation supplies
+  `is_synthetic: false` and records the discovered JSONL file count; dataset,
+  release, manifest identifier, and validated manifest-exclusion count are
+  optional explicit inputs and are never inferred.
 
 ---
 

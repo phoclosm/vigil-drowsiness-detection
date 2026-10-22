@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import WindowConfig
+from vigil.ml.dataset.windowing import extract_windows
 from vigil.ml.evaluation.input_audit import audit_evaluation_input
 
 
@@ -71,7 +72,7 @@ def test_audit_accounts_for_window_exclusions_and_segments() -> None:
     assert audit.windows.accepted_count == 0
     assert audit.windows.exclusion_reasons == {"ambiguous_label": 2}
     assert audit.windows.insufficient_history_segments == 1
-    assert audit.windows.session_boundary_count == 2
+    assert audit.windows.session_partition_count == 2
 
 
 def test_audit_marks_fully_missing_windows_without_excluding_them() -> None:
@@ -93,3 +94,36 @@ def test_audit_serialization_is_deterministic() -> None:
     markdown = audit.to_markdown()
     assert "Candidate Windows" in markdown
     assert "`ear_avg`" in markdown
+
+
+def test_audit_uses_same_eligibility_as_extractor_across_boundaries() -> None:
+    cases = [
+        [make_record(i) for i in range(80)],
+        [make_record(i, label_id=-1 if i == 30 else 0) for i in range(80)],
+        [
+            *[make_record(i) for i in range(70)],
+            *[make_record(i, session_id="session_002") for i in range(70)],
+        ],
+        [make_record(i) for i in range(59)],
+        [
+            *[make_record(i) for i in range(60)],
+            *[make_record(i) for i in range(62, 122)],
+        ],
+    ]
+
+    for records in cases:
+        config = WindowConfig(window_length=60, stride=15)
+        audit = audit_evaluation_input(records, config)
+        windows = extract_windows(records, config)
+        assert audit.windows.accepted_count == len(windows)
+        assert audit.windows.candidate_count == (
+            audit.windows.accepted_count + audit.windows.excluded_count
+        )
+        assert sum(audit.windows.exclusion_reasons.values()) == audit.windows.excluded_count
+
+
+def test_unprovenanced_audit_serializes_unknown_not_false() -> None:
+    audit = audit_evaluation_input([make_record(i) for i in range(60)])
+
+    assert audit.to_dict()["is_synthetic"] == "unknown"
+    assert "Synthetic Fixtures**: unknown" in audit.to_markdown()
