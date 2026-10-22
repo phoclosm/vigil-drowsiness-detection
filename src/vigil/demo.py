@@ -16,6 +16,7 @@ from vigil.runtime.capture import (
     CaptureStream,
 )
 from vigil.runtime.eye_features import EyeFeatureStream, EyeFeatureStreamConfig
+from vigil.runtime.environment import opencv_version
 from vigil.runtime.inference import ModelInferenceAdapter, ModelInferenceError
 from vigil.runtime.landmarks import LandmarkError, MediaPipeFaceLandmarkDetector
 from vigil.runtime.live_pipeline import (
@@ -307,6 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
 
     print(f"Source: {capture_config.source_label}")
+    print(f"OpenCV version: {opencv_version()}")
     print(f"Frames processed: {summary.frames_processed}")
     print(f"Stop reason: {summary.stop_reason}")
     return 0
