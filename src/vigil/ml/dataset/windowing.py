@@ -5,10 +5,75 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import pairwise
 
 from vigil.ml.data.schema import FatigueLabel, SampleRecord
 from vigil.ml.dataset.config import WindowConfig
 from vigil.ml.dataset.normalizer import FeatureNormalizer
+
+
+def _iter_continuous_segments(
+    records: list[SampleRecord],
+    config: WindowConfig,
+) -> tuple[list[tuple[str, str, list[SampleRecord]]], int]:
+    """Validate records and yield deterministic continuous session segments."""
+    if not records:
+        return [], 0
+
+    session_groups: dict[str, list[SampleRecord]] = defaultdict(list)
+    session_to_subj: dict[str, str] = {}
+    for record in records:
+        if record.session_id in session_to_subj:
+            if session_to_subj[record.session_id] != record.subject_id:
+                raise ValueError(
+                    f"Session '{record.session_id}' contains inconsistent subject IDs: "
+                    f"'{session_to_subj[record.session_id]}' vs '{record.subject_id}'."
+                )
+        else:
+            session_to_subj[record.session_id] = record.subject_id
+        session_groups[record.session_id].append(record)
+
+    segments: list[tuple[str, str, list[SampleRecord]]] = []
+    temporal_gap_breaks = 0
+
+    for session_id in sorted(session_groups):
+        sorted_records = sorted(
+            session_groups[session_id],
+            key=lambda record: (record.frame_index, record.timestamp_ms),
+        )
+
+        for previous, current in pairwise(sorted_records):
+            if current.frame_index == previous.frame_index:
+                raise ValueError(
+                    f"Duplicate frame index {current.frame_index} detected in session '{session_id}'."
+                )
+            if current.timestamp_ms <= previous.timestamp_ms:
+                raise ValueError(
+                    f"Non-monotonic timestamp detected in session '{session_id}': "
+                    f"frame {previous.frame_index} ({previous.timestamp_ms}ms) followed by "
+                    f"frame {current.frame_index} ({current.timestamp_ms}ms)."
+                )
+
+        current_segment: list[SampleRecord] = []
+        for record in sorted_records:
+            if not current_segment:
+                current_segment.append(record)
+                continue
+
+            previous = current_segment[-1]
+            frame_gap = record.frame_index - previous.frame_index
+            time_gap_ms = record.timestamp_ms - previous.timestamp_ms
+            if frame_gap > config.max_frame_gap or time_gap_ms > config.max_time_gap_ms:
+                segments.append((session_id, session_to_subj[session_id], current_segment))
+                temporal_gap_breaks += 1
+                current_segment = [record]
+            else:
+                current_segment.append(record)
+
+        if current_segment:
+            segments.append((session_id, session_to_subj[session_id], current_segment))
+
+    return segments, temporal_gap_breaks
 
 
 @dataclass(frozen=True)
@@ -142,113 +207,51 @@ def extract_windows(
     if not records:
         return []
 
-    # Group records by session_id while enforcing consistent subject_id per session
-    session_groups: dict[str, list[SampleRecord]] = defaultdict(list)
-    session_to_subj: dict[str, str] = {}
-    for r in records:
-        if r.session_id in session_to_subj:
-            if session_to_subj[r.session_id] != r.subject_id:
-                raise ValueError(
-                    f"Session '{r.session_id}' contains inconsistent subject IDs: "
-                    f"'{session_to_subj[r.session_id]}' vs '{r.subject_id}'."
-                )
-        else:
-            session_to_subj[r.session_id] = r.subject_id
-        session_groups[r.session_id].append(r)
-
     extracted_windows: list[WindowSample] = []
+    segments, _ = _iter_continuous_segments(records, config)
 
-    for session_id in sorted(session_groups.keys()):
-        session_records = session_groups[session_id]
+    for session_id, _, segment in segments:
+        seg_len = len(segment)
+        if seg_len < config.window_length:
+            # Emit no windows if segment is shorter than W
+            continue
 
-        # Sort strictly by frame_index and timestamp_ms
-        sorted_records = sorted(
-            session_records,
-            key=lambda r: (r.frame_index, r.timestamp_ms),
-        )
+        for start_idx in range(0, seg_len - config.window_length + 1, config.stride):
+            window_slice = segment[start_idx : start_idx + config.window_length]
 
-        # Validate temporal sequence integrity: no duplicate frame indices and monotonic timestamps
-        for i in range(1, len(sorted_records)):
-            prev_rec = sorted_records[i - 1]
-            curr_rec = sorted_records[i]
-            if curr_rec.frame_index == prev_rec.frame_index:
-                raise ValueError(
-                    f"Duplicate frame index {curr_rec.frame_index} detected in session '{session_id}'."
-                )
-            if curr_rec.timestamp_ms <= prev_rec.timestamp_ms:
-                raise ValueError(
-                    f"Non-monotonic timestamp detected in session '{session_id}': "
-                    f"frame {prev_rec.frame_index} ({prev_rec.timestamp_ms}ms) followed by "
-                    f"frame {curr_rec.frame_index} ({curr_rec.timestamp_ms}ms)."
-                )
-
-        # Break session into continuous segments based on frame and timing gaps
-        segments: list[list[SampleRecord]] = []
-        current_segment: list[SampleRecord] = []
-
-        for r in sorted_records:
-            if not current_segment:
-                current_segment.append(r)
+            # Invariant: Discard windows that overlap any AMBIGUOUS annotation
+            if any(r.label_id == FatigueLabel.AMBIGUOUS for r in window_slice):
                 continue
 
-            prev = current_segment[-1]
-            frame_gap = r.frame_index - prev.frame_index
-            time_gap_ms = r.timestamp_ms - prev.timestamp_ms
+            # Final sample alignment
+            final_sample = window_slice[-1]
+            target_label_id = final_sample.label_id
 
-            # Check continuity constraints
-            if frame_gap > config.max_frame_gap or time_gap_ms > config.max_time_gap_ms:
-                # Discontinuity detected: end segment and begin new segment
-                segments.append(current_segment)
-                current_segment = [r]
-            else:
-                current_segment.append(r)
-
-        if current_segment:
-            segments.append(current_segment)
-
-        # Slide window across each continuous segment
-        for segment in segments:
-            seg_len = len(segment)
-            if seg_len < config.window_length:
-                # Emit no windows if segment is shorter than W
+            if target_label_id not in (
+                FatigueLabel.ACTIVE,
+                FatigueLabel.DROWSY,
+                FatigueLabel.SLEEPING,
+            ):
+                # Target must be a canonical class
                 continue
 
-            for start_idx in range(0, seg_len - config.window_length + 1, config.stride):
-                window_slice = segment[start_idx : start_idx + config.window_length]
+            # Construct (60, 8) feature matrix
+            feature_matrix: list[list[float]] = []
+            for sample in window_slice:
+                feature_matrix.append(build_sample_feature_vector(sample, normalizer))
 
-                # Invariant: Discard windows that overlap any AMBIGUOUS annotation
-                if any(r.label_id == FatigueLabel.AMBIGUOUS for r in window_slice):
-                    continue
-
-                # Final sample alignment
-                final_sample = window_slice[-1]
-                target_label_id = final_sample.label_id
-
-                if target_label_id not in (
-                    FatigueLabel.ACTIVE,
-                    FatigueLabel.DROWSY,
-                    FatigueLabel.SLEEPING,
-                ):
-                    # Target must be a canonical class
-                    continue
-
-                # Construct (60, 8) feature matrix
-                feature_matrix: list[list[float]] = []
-                for sample in window_slice:
-                    feature_matrix.append(build_sample_feature_vector(sample, normalizer))
-
-                first_sample = window_slice[0]
-                extracted_windows.append(
-                    WindowSample(
-                        features=feature_matrix,
-                        target=int(target_label_id),
-                        subject_id=final_sample.subject_id,
-                        session_id=session_id,
-                        start_frame_index=first_sample.frame_index,
-                        end_frame_index=final_sample.frame_index,
-                        start_timestamp_ms=first_sample.timestamp_ms,
-                        end_timestamp_ms=final_sample.timestamp_ms,
-                    )
+            first_sample = window_slice[0]
+            extracted_windows.append(
+                WindowSample(
+                    features=feature_matrix,
+                    target=int(target_label_id),
+                    subject_id=final_sample.subject_id,
+                    session_id=session_id,
+                    start_frame_index=first_sample.frame_index,
+                    end_frame_index=final_sample.frame_index,
+                    start_timestamp_ms=first_sample.timestamp_ms,
+                    end_timestamp_ms=final_sample.timestamp_ms,
                 )
+            )
 
     return extracted_windows

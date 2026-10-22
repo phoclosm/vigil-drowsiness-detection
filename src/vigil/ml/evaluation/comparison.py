@@ -17,6 +17,7 @@ from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
 from vigil.ml.dataset.windowing import extract_windows
+from vigil.ml.evaluation.input_audit import EvaluationInputAudit, audit_evaluation_input
 from vigil.ml.models.export import LoadedModelBundle, load_model_bundle
 from vigil.ml.models.gru import GRUTemporalClassifier
 from vigil.ml.provenance import (
@@ -70,10 +71,11 @@ class ModelComparisonReport:
     evaluation_metadata: IndependentEvaluationMetadata
     window_count: int
     is_synthetic: bool = False
+    input_audit: EvaluationInputAudit | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the comparative report into a nested dictionary."""
-        return {
+        result = {
             "is_synthetic": self.is_synthetic,
             "window_count": self.window_count,
             "gru_model": self.gru_report.to_dict(),
@@ -81,6 +83,9 @@ class ModelComparisonReport:
             "rule_baseline_full": self.baseline_full_report.to_dict(),
             "evaluation_metadata": self.evaluation_metadata.to_dict(),
         }
+        if self.input_audit is not None:
+            result["input_audit"] = self.input_audit.to_dict()
+        return result
 
     def to_markdown(self) -> str:
         """Render a formatted markdown comparison table."""
@@ -132,6 +137,9 @@ class ModelComparisonReport:
             f"| **DROWSY (1)** | {self.baseline_matched_report.confusion_matrix[1][0]} | {self.baseline_matched_report.confusion_matrix[1][1]} | {self.baseline_matched_report.confusion_matrix[1][2]} |",
             f"| **SLEEPING (2)** | {self.baseline_matched_report.confusion_matrix[2][0]} | {self.baseline_matched_report.confusion_matrix[2][1]} | {self.baseline_matched_report.confusion_matrix[2][2]} |",
         ])
+
+        if self.input_audit is not None:
+            lines.extend(["", self.input_audit.to_markdown()])
 
         return "\n".join(lines)
 
@@ -255,6 +263,7 @@ def compare_models(
         evaluation_subjects=sorted({record.subject_id for record in records}),
         evaluation_sessions=sorted({record.session_id for record in records}),
     )
+    input_audit = audit_evaluation_input(records, is_synthetic=is_synthetic)
 
     return ModelComparisonReport(
         gru_report=gru_report,
@@ -263,6 +272,7 @@ def compare_models(
         evaluation_metadata=evaluation_metadata,
         window_count=len(evaluation_windows),
         is_synthetic=is_synthetic,
+        input_audit=input_audit,
     )
 
 
