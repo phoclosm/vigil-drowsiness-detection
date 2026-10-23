@@ -320,8 +320,8 @@ report = evaluate_recording_directory(
   window accounting, and reason-coded label exclusions. It also records
   temporal-gap and insufficient-history segmentation diagnostics. Malformed
   JSONL/schema rows fail before auditing with their source location; they are
-  not counted as exclusions. Manifest exclusion totals are populated only when
-  a validated manifest is supplied.
+  not counted as exclusions. Manifest exclusion totals are not currently
+  produced; they cannot be established by a caller-supplied count.
 - Standalone `audit_evaluation_input()` reports use `is_synthetic: "unknown"`
   unless provenance is explicitly supplied. Directory evaluation also uses
   `is_synthetic: "unknown"` unless its caller explicitly supplies `true` or
