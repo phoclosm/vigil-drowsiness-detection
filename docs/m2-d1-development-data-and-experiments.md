@@ -57,7 +57,9 @@ The supplied Git SHA must be the current 40-character `HEAD` SHA; malformed or
 stale values are rejected rather than silently replaced. The recorded SHA
 identifies the committed `HEAD` checkout. It does not claim to capture
 uncommitted modifications, so real runs should be performed from a reviewed
-clean worktree.
+clean worktree. The runner enforces this by rejecting tracked changes and
+unexpected untracked source/configuration files; only the three protected
+planning DOCX paths are allowed to remain untracked.
 The artifact directory must already exist and resolve outside the active Git
 worktree; repository-root paths and symlink paths that resolve into the
 worktree are rejected. This proves which manifest partitions, software

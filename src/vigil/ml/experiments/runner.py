@@ -18,6 +18,14 @@ from vigil.ml.training.trainer import (
     train_temporal_classifier_on_partitions,
 )
 
+_ALLOWED_UNTRACKED_PATHS = frozenset(
+    {
+        "docs/Vigil 2 Project context with prompt.docx",
+        "docs/Vigil_M2_Week1_Role_and_GitHub_Plan.docx",
+        "docs/Vigil_M2_Final_Sprint_Oct23-27.docx",
+    }
+)
+
 
 def _digest_file(path: str) -> str:
     digest = hashlib.sha256()
@@ -69,6 +77,40 @@ def _current_checkout_commit(repository_root: Path) -> str:
             "Git returned an invalid HEAD commit; refusing to record experiment provenance."
         )
     return commit.lower()
+
+
+def _validate_clean_worktree(repository_root: Path) -> None:
+    """Reject code/config changes while allowing the protected planning DOCX files."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Cannot determine Git worktree status; refusing to run the experiment."
+        ) from exc
+
+    unexpected: list[str] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 3:
+            continue
+        status = line[:2]
+        path_text = line[3:].replace("\\", "/")
+        if status == "??":
+            normalized_path = str(Path(path_text).as_posix())
+            if normalized_path not in _ALLOWED_UNTRACKED_PATHS:
+                unexpected.append(f"untracked path '{normalized_path}'")
+        else:
+            unexpected.append(f"tracked change '{path_text}'")
+    if unexpected:
+        raise RuntimeError(
+            "The Git worktree is not clean; commit or remove changes before running the "
+            f"experiment: {'; '.join(unexpected)}"
+        )
 
 
 def _validate_artifact_directory(artifact_dir: str) -> Path:
@@ -152,6 +194,7 @@ def run_development_experiment(
         raise ValueError("git_sha must be a non-empty string.")
     repository_root = _repository_root()
     current_commit = _current_checkout_commit(repository_root)
+    _validate_clean_worktree(repository_root)
     if not re.fullmatch(r"[0-9a-fA-F]{40}", git_sha.strip()):
         raise ValueError("git_sha must be a 40-character hexadecimal commit SHA.")
     if git_sha.strip().lower() != current_commit:

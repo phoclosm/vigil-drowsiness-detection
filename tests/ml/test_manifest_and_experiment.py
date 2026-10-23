@@ -12,8 +12,17 @@ import pytest
 
 from vigil.ml.data.manifest import ApprovedDataManifest, ManifestRecording
 from vigil.ml.data.schema import SampleRecord
+from vigil.ml.experiments import runner as experiment_runner
 from vigil.ml.experiments.runner import run_development_experiment
 from vigil.ml.training.config import TrainingConfig
+
+ORIGINAL_VALIDATE_CLEAN_WORKTREE = experiment_runner._validate_clean_worktree
+
+
+@pytest.fixture(autouse=True)
+def allow_test_source_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep synthetic integration fixtures focused on model behavior."""
+    monkeypatch.setattr(experiment_runner, "_validate_clean_worktree", lambda _root: None)
 
 
 def current_git_sha() -> str:
@@ -24,6 +33,62 @@ def current_git_sha() -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def fake_git_result(output: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=0, stdout=output, stderr=""
+    )
+
+
+@pytest.mark.parametrize(
+    ("status_output", "message"),
+    [
+        (" M src/vigil/ml/experiments/runner.py\n", "tracked change"),
+        ("M  src/vigil/ml/experiments/runner.py\n", "tracked change"),
+        ("?? src/vigil/ml/new_config.toml\n", "untracked path"),
+    ],
+)
+def test_clean_worktree_rejects_code_and_configuration_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    status_output: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        experiment_runner.subprocess,
+        "run",
+        lambda *args, **kwargs: fake_git_result(status_output),
+    )
+    with pytest.raises(RuntimeError, match=message):
+        ORIGINAL_VALIDATE_CLEAN_WORKTREE(tmp_path)
+
+
+def test_clean_worktree_allows_protected_planning_documents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    status_output = (
+        "?? docs/Vigil 2 Project context with prompt.docx\n"
+        "?? docs/Vigil_M2_Week1_Role_and_GitHub_Plan.docx\n"
+        "?? docs/Vigil_M2_Final_Sprint_Oct23-27.docx\n"
+    )
+    monkeypatch.setattr(
+        experiment_runner.subprocess,
+        "run",
+        lambda *args, **kwargs: fake_git_result(status_output),
+    )
+    ORIGINAL_VALIDATE_CLEAN_WORKTREE(tmp_path)
+
+
+def test_clean_worktree_fails_when_git_status_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, "git")
+
+    monkeypatch.setattr(experiment_runner.subprocess, "run", fail)
+    with pytest.raises(RuntimeError, match="Cannot determine Git worktree status"):
+        ORIGINAL_VALIDATE_CLEAN_WORKTREE(tmp_path)
 
 
 def make_record(frame_index: int, session_id: str, subject_id: str) -> SampleRecord:
