@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,16 @@ from vigil.ml.data.manifest import ApprovedDataManifest, ManifestRecording
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.experiments.runner import run_development_experiment
 from vigil.ml.training.config import TrainingConfig
+
+
+def current_git_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def make_record(frame_index: int, session_id: str, subject_id: str) -> SampleRecord:
@@ -144,7 +155,7 @@ def test_development_runner_honors_manifest_subject_split(
         manifest,
         data_root=str(data_root),
         artifact_dir=str(artifact_dir),
-        git_sha="abc123",
+        git_sha=current_git_sha(),
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
         is_synthetic=True,
     )
@@ -166,7 +177,7 @@ def test_development_runner_honors_manifest_session_split(
         manifest,
         data_root=str(data_root),
         artifact_dir=str(artifact_dir),
-        git_sha="abc123",
+        git_sha=current_git_sha(),
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
     )
 
@@ -202,13 +213,13 @@ def test_development_runner_records_manifest_and_training_metadata(
         manifest,
         data_root=str(tmp_path),
         artifact_dir=str(artifact_dir),
-        git_sha="abc123",
+        git_sha=current_git_sha(),
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
         is_synthetic=True,
     )
 
     serialized = json.loads(experiment.to_json())
-    assert serialized["git_sha"] == "abc123"
+    assert serialized["git_sha"] == current_git_sha()
     assert serialized["manifest"]["dataset_version"] == "2026-10-23"
     assert serialized["epoch_count"] == 1
     assert serialized["best_checkpoint_epoch"] == 1
@@ -227,7 +238,7 @@ def test_development_runner_requires_valid_artifact_destination(tmp_path: Path) 
             manifest,
             data_root=str(data_root),
             artifact_dir=str(tmp_path / "missing-artifacts"),
-            git_sha="abc123",
+            git_sha=current_git_sha(),
         )
 
 
@@ -250,11 +261,33 @@ def test_development_runner_excludes_held_out_records(tmp_path: Path) -> None:
         manifest,
         data_root=str(tmp_path),
         artifact_dir=str(artifact_dir),
-        git_sha="abc123",
+        git_sha=current_git_sha(),
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
     )
 
     assert "subject_3" not in experiment.train_subjects + experiment.val_subjects
+
+
+@pytest.mark.parametrize(
+    ("git_sha", "message"),
+    [
+        ("not-a-commit", "40-character hexadecimal"),
+        ("0" * 40, "does not match the current checkout"),
+    ],
+)
+def test_development_runner_rejects_invalid_git_provenance(
+    tmp_path: Path, git_sha: str, message: str
+) -> None:
+    manifest, data_root = make_development_fixture(tmp_path)
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    with pytest.raises(ValueError, match=message):
+        run_development_experiment(
+            manifest,
+            data_root=str(data_root),
+            artifact_dir=str(artifact_dir),
+            git_sha=git_sha,
+        )
 
 
 def test_development_runner_rejects_artifact_directory_in_worktree() -> None:
@@ -267,7 +300,7 @@ def test_development_runner_rejects_artifact_directory_in_worktree() -> None:
             ),
             data_root=str(repository_root),
             artifact_dir=str(repository_root),
-            git_sha="abc123",
+            git_sha=current_git_sha(),
         )
 
 
@@ -280,7 +313,7 @@ def test_development_runner_allows_external_artifact_directory(tmp_path: Path) -
         manifest,
         data_root=str(data_root),
         artifact_dir=str(artifact_dir),
-        git_sha="abc123",
+        git_sha=current_git_sha(),
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
     )
 
@@ -304,7 +337,7 @@ def test_development_runner_rejects_symlink_resolving_into_worktree(
             ),
             data_root=str(tmp_path),
             artifact_dir=str(link),
-            git_sha="abc123",
+            git_sha=current_git_sha(),
         )
 
 

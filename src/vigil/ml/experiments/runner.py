@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,28 @@ def _repository_root() -> Path:
             "Git returned an empty worktree root; refusing to validate artifact safety."
         )
     return Path(root_text).resolve()
+
+
+def _current_checkout_commit(repository_root: Path) -> str:
+    """Return the current checkout commit for development provenance."""
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Cannot verify the current Git checkout; refusing to record experiment provenance."
+        ) from exc
+    commit = commit_result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+        raise RuntimeError(
+            "Git returned an invalid HEAD commit; refusing to record experiment provenance."
+        )
+    return commit.lower()
 
 
 def _validate_artifact_directory(artifact_dir: str) -> Path:
@@ -127,6 +150,14 @@ def run_development_experiment(
     """Load manifest-approved partitions, train, and record reproducibility metadata."""
     if not isinstance(git_sha, str) or not git_sha.strip():
         raise ValueError("git_sha must be a non-empty string.")
+    repository_root = _repository_root()
+    current_commit = _current_checkout_commit(repository_root)
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", git_sha.strip()):
+        raise ValueError("git_sha must be a 40-character hexadecimal commit SHA.")
+    if git_sha.strip().lower() != current_commit:
+        raise ValueError(
+            f"git_sha does not match the current checkout commit ({current_commit})."
+        )
     artifact_path = _validate_artifact_directory(artifact_dir)
     if is_synthetic is not None and not isinstance(is_synthetic, bool):
         raise TypeError("is_synthetic must be a boolean or None.")

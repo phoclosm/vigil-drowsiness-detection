@@ -53,6 +53,11 @@ the Git SHA, manifest identity, seed, actual train/validation groups, GRU
 configuration, Adam learning rate and weight decay, epoch count, best epoch,
 validation metrics, the required SHA-256 digest of the checkpoint written to
 the caller-provided artifact directory, and explicit synthetic-data provenance.
+The supplied Git SHA must be the current 40-character `HEAD` SHA; malformed or
+stale values are rejected rather than silently replaced. The recorded SHA
+identifies the committed `HEAD` checkout. It does not claim to capture
+uncommitted modifications, so real runs should be performed from a reviewed
+clean worktree.
 The artifact directory must already exist and resolve outside the active Git
 worktree; repository-root paths and symlink paths that resolve into the
 worktree are rejected. This proves which manifest partitions, software
