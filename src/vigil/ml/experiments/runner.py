@@ -91,7 +91,8 @@ def run_development_experiment(
     artifact_path = Path(artifact_dir)
     if not artifact_path.exists() or not artifact_path.is_dir():
         raise ValueError(
-            f"artifact_dir must be an existing directory outside the repository: '{artifact_dir}'."
+            f"artifact_dir must be an existing directory reserved for generated artifacts: "
+            f"'{artifact_dir}'."
         )
     if is_synthetic is not None and not isinstance(is_synthetic, bool):
         raise TypeError("is_synthetic must be a boolean or None.")
