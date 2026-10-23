@@ -216,6 +216,8 @@ def test_development_runner_records_manifest_and_training_metadata(
     checkpoint = artifact_dir / "best_gru_checkpoint.pt"
     assert checkpoint.is_file()
     assert serialized["artifact_sha256"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    torch = pytest.importorskip("torch")
+    assert isinstance(torch.load(checkpoint, map_location="cpu"), dict)
 
 
 def test_development_runner_requires_valid_artifact_destination(tmp_path: Path) -> None:
