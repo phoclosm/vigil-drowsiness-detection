@@ -97,6 +97,7 @@ class ApprovedDataManifest:
     def validate_group_assignments(self) -> None:
         seen_recordings: set[str] = set()
         seen_paths: set[str] = set()
+        seen_sessions: set[str] = set()
         session_subjects: dict[str, str] = {}
         group_splits: dict[str, set[str]] = {}
         for recording in self.recordings:
@@ -104,8 +105,13 @@ class ApprovedDataManifest:
                 raise ValueError(f"Duplicate recording_id '{recording.recording_id}'.")
             if recording.path in seen_paths:
                 raise ValueError(f"Duplicate manifest path '{recording.path}'.")
+            if recording.session_id in seen_sessions:
+                raise ValueError(
+                    f"Session '{recording.session_id}' must have exactly one manifest recording."
+                )
             seen_recordings.add(recording.recording_id)
             seen_paths.add(recording.path)
+            seen_sessions.add(recording.session_id)
             previous_subject = session_subjects.setdefault(
                 recording.session_id, recording.subject_id
             )
@@ -174,29 +180,6 @@ class ApprovedDataManifest:
             raise ValueError(f"split must be one of {sorted(MANIFEST_SPLITS)}.")
         return tuple(recording for recording in self.recordings if recording.split == split)
 
-    def validate_development_records(self, records: list[SampleRecord]) -> None:
-        """Ensure supplied records belong to manifest train/validation entries."""
-        session_splits = {
-            recording.session_id: recording.split for recording in self.recordings
-        }
-        session_subjects = {
-            recording.session_id: recording.subject_id for recording in self.recordings
-        }
-        for record in records:
-            split = session_splits.get(record.session_id)
-            if split is None:
-                raise ValueError(
-                    f"Record session '{record.session_id}' is absent from the manifest."
-                )
-            if split == "held_out":
-                raise ValueError(
-                    f"Held-out session '{record.session_id}' cannot enter development training."
-                )
-            if session_subjects[record.session_id] != record.subject_id:
-                raise ValueError(
-                    f"Record subject does not match manifest session '{record.session_id}'."
-                )
-
     def load_records(self, root: Path | str, split: str) -> list[SampleRecord]:
         """Load validated JSONL records for one manifest split."""
         root_path = Path(root).resolve()
@@ -224,3 +207,16 @@ class ApprovedDataManifest:
                     )
                 records.append(record)
         return records
+
+    def load_development_records(
+        self, root: Path | str
+    ) -> tuple[list[SampleRecord], list[SampleRecord]]:
+        """Load only manifest-assigned train and validation records."""
+        train_records = self.load_records(root, "train")
+        validation_records = self.load_records(root, "validation")
+        if not train_records or not validation_records:
+            raise ValueError(
+                "Manifest development partitions must both contain records; "
+                "held-out records are excluded."
+            )
+        return train_records, validation_records

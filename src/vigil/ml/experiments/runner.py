@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from vigil.ml.data.manifest import ApprovedDataManifest
+from vigil.ml.dataset.splitter import DatasetGroupSplitResult
 from vigil.ml.training.config import TrainingConfig
-from vigil.ml.training.trainer import TrainingResult, train_temporal_classifier
+from vigil.ml.training.trainer import (
+    TrainingResult,
+    train_temporal_classifier_on_partitions,
+)
 
 
 def _digest_file(path: str | None) -> str | None:
@@ -74,22 +78,41 @@ class DevelopmentExperiment:
 
 
 def run_development_experiment(
-    records: list[Any],
     manifest: ApprovedDataManifest,
     *,
+    data_root: str,
     git_sha: str,
     config: TrainingConfig | None = None,
     is_synthetic: bool | None = None,
 ) -> tuple[TrainingResult, DevelopmentExperiment]:
-    """Train on manifest-approved development records and record reproducibility metadata."""
+    """Load manifest-approved partitions, train, and record reproducibility metadata."""
     if not isinstance(git_sha, str) or not git_sha.strip():
         raise ValueError("git_sha must be a non-empty string.")
     if is_synthetic is not None and not isinstance(is_synthetic, bool):
         raise TypeError("is_synthetic must be a boolean or None.")
     manifest.validate_group_assignments()
-    manifest.validate_development_records(records)
+    train_records, val_records = manifest.load_development_records(data_root)
     effective_config = config or TrainingConfig()
-    training_result = train_temporal_classifier(records, effective_config)
+    train_subjects = sorted({record.subject_id for record in train_records})
+    val_subjects = sorted({record.subject_id for record in val_records})
+    train_sessions = sorted({record.session_id for record in train_records})
+    val_sessions = sorted({record.session_id for record in val_records})
+    split_result = DatasetGroupSplitResult(
+        train_sessions=train_sessions,
+        val_sessions=val_sessions,
+        train_subjects=train_subjects,
+        val_subjects=val_subjects,
+        strategy=manifest.split_strategy,
+        subject_count=len(set(train_subjects + val_subjects)),
+        session_count=len(set(train_sessions + val_sessions)),
+        limitation_note=None,
+    )
+    training_result = train_temporal_classifier_on_partitions(
+        train_records,
+        val_records,
+        split_result,
+        effective_config,
+    )
     experiment = DevelopmentExperiment(
         git_sha=git_sha.strip(),
         manifest_name=manifest.dataset_name,
