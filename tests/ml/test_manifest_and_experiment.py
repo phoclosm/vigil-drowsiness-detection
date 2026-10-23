@@ -257,6 +257,57 @@ def test_development_runner_excludes_held_out_records(tmp_path: Path) -> None:
     assert "subject_3" not in experiment.train_subjects + experiment.val_subjects
 
 
+def test_development_runner_rejects_artifact_directory_in_worktree() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    with pytest.raises(ValueError, match="outside the Git worktree"):
+        run_development_experiment(
+            make_manifest(
+                ManifestRecording("r1", "s1.jsonl", "subject_1", "session_1", "train"),
+                ManifestRecording("r2", "s2.jsonl", "subject_2", "session_2", "validation"),
+            ),
+            data_root=str(repository_root),
+            artifact_dir=str(repository_root),
+            git_sha="abc123",
+        )
+
+
+def test_development_runner_allows_external_artifact_directory(tmp_path: Path) -> None:
+    manifest, data_root = make_development_fixture(tmp_path)
+    artifact_dir = tmp_path / "external-artifacts"
+    artifact_dir.mkdir()
+
+    _, experiment = run_development_experiment(
+        manifest,
+        data_root=str(data_root),
+        artifact_dir=str(artifact_dir),
+        git_sha="abc123",
+        config=TrainingConfig(max_epochs=1, hidden_dim=4),
+    )
+
+    assert experiment.artifact_sha256
+
+
+def test_development_runner_rejects_symlink_resolving_into_worktree(
+    tmp_path: Path,
+) -> None:
+    link = tmp_path / "worktree-artifacts"
+    repository_root = Path(__file__).resolve().parents[2]
+    try:
+        os.symlink(repository_root, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation is unavailable on this platform.")
+    with pytest.raises(ValueError, match="outside the Git worktree"):
+        run_development_experiment(
+            make_manifest(
+                ManifestRecording("r1", "s1.jsonl", "subject_1", "session_1", "train"),
+                ManifestRecording("r2", "s2.jsonl", "subject_2", "session_2", "validation"),
+            ),
+            data_root=str(tmp_path),
+            artifact_dir=str(link),
+            git_sha="abc123",
+        )
+
+
 def test_manifest_rejects_unapproved_source_and_malformed_rows(tmp_path: Path) -> None:
     recording = ManifestRecording("r1", "s1.jsonl", "subject_1", "session_1", "train")
     manifest = make_manifest(

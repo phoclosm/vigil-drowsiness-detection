@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,44 @@ def _digest_file(path: str) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _repository_root() -> Path:
+    """Resolve the active checkout root or fail instead of guessing."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=Path(__file__).resolve().parent,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Cannot determine the Git worktree root; refusing to validate artifact safety."
+        ) from exc
+    root_text = result.stdout.strip()
+    if not root_text:
+        raise RuntimeError(
+            "Git returned an empty worktree root; refusing to validate artifact safety."
+        )
+    return Path(root_text).resolve()
+
+
+def _validate_artifact_directory(artifact_dir: str) -> Path:
+    artifact_path = Path(artifact_dir).resolve()
+    if not artifact_path.exists() or not artifact_path.is_dir():
+        raise ValueError(
+            f"artifact_dir must be an existing directory reserved for generated artifacts: "
+            f"'{artifact_dir}'."
+        )
+    repository_root = _repository_root()
+    if artifact_path == repository_root or repository_root in artifact_path.parents:
+        raise ValueError(
+            "artifact_dir must resolve outside the Git worktree; generated checkpoints "
+            "must remain outside Git."
+        )
+    return artifact_path
 
 
 @dataclass(frozen=True)
@@ -88,12 +127,7 @@ def run_development_experiment(
     """Load manifest-approved partitions, train, and record reproducibility metadata."""
     if not isinstance(git_sha, str) or not git_sha.strip():
         raise ValueError("git_sha must be a non-empty string.")
-    artifact_path = Path(artifact_dir)
-    if not artifact_path.exists() or not artifact_path.is_dir():
-        raise ValueError(
-            f"artifact_dir must be an existing directory reserved for generated artifacts: "
-            f"'{artifact_dir}'."
-        )
+    artifact_path = _validate_artifact_directory(artifact_dir)
     if is_synthetic is not None and not isinstance(is_synthetic, bool):
         raise TypeError("is_synthetic must be a boolean or None.")
     manifest.validate_group_assignments()

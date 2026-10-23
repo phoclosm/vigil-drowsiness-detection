@@ -53,9 +53,11 @@ the Git SHA, manifest identity, seed, actual train/validation groups, GRU
 configuration, Adam learning rate and weight decay, epoch count, best epoch,
 validation metrics, the required SHA-256 digest of the checkpoint written to
 the caller-provided artifact directory, and explicit synthetic-data provenance.
-The artifact directory must already exist and should remain outside Git. This
-proves which manifest partitions, software configuration, and checkpoint bytes
-were consumed; it does not independently prove authorization or consent.
+The artifact directory must already exist and resolve outside the active Git
+worktree; repository-root paths and symlink paths that resolve into the
+worktree are rejected. This proves which manifest partitions, software
+configuration, and checkpoint bytes were consumed; it does not independently
+prove authorization or consent.
 
 The development harness does not run final held-out evaluation, model sweeps,
 calibration, release export, or real-data benchmarking. Those are deferred to
