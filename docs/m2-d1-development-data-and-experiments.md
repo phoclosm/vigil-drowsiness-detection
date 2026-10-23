@@ -22,6 +22,13 @@ project owners before a run is treated as a real-data experiment.
 - subject/session-aware recording references and `train`, `validation`, or
   `held_out` assignments.
 
+The canonical labels are fixed as `ACTIVE=0`, `DROWSY=1`, `SLEEPING=2`, and
+`AMBIGUOUS=-1`. The manifest mapping is metadata only; `load_records()` does
+not convert source labels. Manifest-referenced JSONL files must already contain
+canonical, validated `SampleRecord` labels. Conversion from source annotations
+belongs to a separate reviewed ingestion step. Unsupported or noncanonical
+labels fail loudly and are never silently translated.
+
 Manifest validation rejects duplicate recordings, path traversal, inconsistent
 session identities, and group assignments that cross splits. JSONL loading
 preserves blank-line handling but fails with path and line context for malformed
@@ -44,8 +51,10 @@ with the existing rules, and computes model-selection metrics only on the
 loaded validation records. The experiment record contains:
 the Git SHA, manifest identity, seed, actual train/validation groups, GRU
 configuration, Adam learning rate and weight decay, epoch count, best epoch,
-validation metrics, optional checkpoint digest, and explicit synthetic-data
-provenance. This proves which manifest partitions and software configuration
+validation metrics, the required SHA-256 digest of the checkpoint written to
+the caller-provided artifact directory, and explicit synthetic-data provenance.
+The artifact directory must already exist and should remain outside Git. This
+proves which manifest partitions, software configuration, and checkpoint bytes
 were consumed; it does not independently prove authorization or consent.
 
 The development harness does not run final held-out evaluation, model sweeps,

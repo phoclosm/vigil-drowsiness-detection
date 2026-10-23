@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -136,10 +137,13 @@ def test_development_runner_honors_manifest_subject_split(
     tmp_path: Path,
 ) -> None:
     manifest, data_root = make_development_fixture(tmp_path)
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
 
     _, experiment = run_development_experiment(
         manifest,
         data_root=str(data_root),
+        artifact_dir=str(artifact_dir),
         git_sha="abc123",
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
         is_synthetic=True,
@@ -155,10 +159,13 @@ def test_development_runner_honors_manifest_session_split(
     tmp_path: Path,
 ) -> None:
     manifest, data_root = make_development_fixture(tmp_path, split_strategy="session")
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
 
     _, experiment = run_development_experiment(
         manifest,
         data_root=str(data_root),
+        artifact_dir=str(artifact_dir),
         git_sha="abc123",
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
     )
@@ -188,10 +195,13 @@ def test_development_runner_records_manifest_and_training_metadata(
         manifest.recordings[1],
         [make_record(frame, "session_2", "subject_2") for frame in range(80)],
     )
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
 
     _, experiment = run_development_experiment(
         manifest,
         data_root=str(tmp_path),
+        artifact_dir=str(artifact_dir),
         git_sha="abc123",
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
         is_synthetic=True,
@@ -203,6 +213,20 @@ def test_development_runner_records_manifest_and_training_metadata(
     assert serialized["epoch_count"] == 1
     assert serialized["best_checkpoint_epoch"] == 1
     assert serialized["is_synthetic"] is True
+    checkpoint = artifact_dir / "best_gru_checkpoint.pt"
+    assert checkpoint.is_file()
+    assert serialized["artifact_sha256"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+
+
+def test_development_runner_requires_valid_artifact_destination(tmp_path: Path) -> None:
+    manifest, data_root = make_development_fixture(tmp_path)
+    with pytest.raises(ValueError, match="artifact_dir"):
+        run_development_experiment(
+            manifest,
+            data_root=str(data_root),
+            artifact_dir=str(tmp_path / "missing-artifacts"),
+            git_sha="abc123",
+        )
 
 
 def test_development_runner_excludes_held_out_records(tmp_path: Path) -> None:
@@ -217,10 +241,13 @@ def test_development_runner_excludes_held_out_records(tmp_path: Path) -> None:
             recording,
             [make_record(frame, recording.session_id, recording.subject_id) for frame in range(80)],
         )
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
 
     _, experiment = run_development_experiment(
         manifest,
         data_root=str(tmp_path),
+        artifact_dir=str(artifact_dir),
         git_sha="abc123",
         config=TrainingConfig(max_epochs=1, hidden_dim=4),
     )
@@ -265,4 +292,18 @@ def test_manifest_rejects_resolved_symlink_escape(tmp_path: Path) -> None:
         ManifestRecording("r2", "s2.jsonl", "subject_2", "session_2", "validation"),
     )
     with pytest.raises(ValueError, match="escapes root"):
+        manifest.load_records(tmp_path, "train")
+
+
+def test_manifest_requires_canonical_sample_labels(tmp_path: Path) -> None:
+    recording = ManifestRecording("r1", "s1.jsonl", "subject_1", "session_1", "train")
+    manifest = make_manifest(
+        recording,
+        ManifestRecording("r2", "s2.jsonl", "subject_2", "session_2", "validation"),
+    )
+    invalid = make_record(0, "session_1", "subject_1").to_dict()
+    invalid["label"] = "source-alert"
+    invalid["label_id"] = 7
+    (tmp_path / "s1.jsonl").write_text(json.dumps(invalid) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"s1\.jsonl.*line 1"):
         manifest.load_records(tmp_path, "train")

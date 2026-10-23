@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from vigil.ml.data.manifest import ApprovedDataManifest
@@ -16,9 +17,7 @@ from vigil.ml.training.trainer import (
 )
 
 
-def _digest_file(path: str | None) -> str | None:
-    if path is None:
-        return None
+def _digest_file(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -45,7 +44,7 @@ class DevelopmentExperiment:
     epoch_count: int
     best_checkpoint_epoch: int
     metrics: dict[str, Any]
-    artifact_sha256: str | None
+    artifact_sha256: str
     is_synthetic: bool | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +80,7 @@ def run_development_experiment(
     manifest: ApprovedDataManifest,
     *,
     data_root: str,
+    artifact_dir: str,
     git_sha: str,
     config: TrainingConfig | None = None,
     is_synthetic: bool | None = None,
@@ -88,11 +88,31 @@ def run_development_experiment(
     """Load manifest-approved partitions, train, and record reproducibility metadata."""
     if not isinstance(git_sha, str) or not git_sha.strip():
         raise ValueError("git_sha must be a non-empty string.")
+    artifact_path = Path(artifact_dir)
+    if not artifact_path.exists() or not artifact_path.is_dir():
+        raise ValueError(
+            f"artifact_dir must be an existing directory outside the repository: '{artifact_dir}'."
+        )
     if is_synthetic is not None and not isinstance(is_synthetic, bool):
         raise TypeError("is_synthetic must be a boolean or None.")
     manifest.validate_group_assignments()
     train_records, val_records = manifest.load_development_records(data_root)
     effective_config = config or TrainingConfig()
+    if effective_config.output_dir is not None:
+        raise ValueError(
+            "Do not set TrainingConfig.output_dir for the development harness; "
+            "use artifact_dir."
+        )
+    effective_config = TrainingConfig(
+        batch_size=effective_config.batch_size,
+        learning_rate=effective_config.learning_rate,
+        max_epochs=effective_config.max_epochs,
+        weight_decay=effective_config.weight_decay,
+        seed=effective_config.seed,
+        train_ratio=effective_config.train_ratio,
+        hidden_dim=effective_config.hidden_dim,
+        output_dir=str(artifact_path),
+    )
     train_subjects = sorted({record.subject_id for record in train_records})
     val_subjects = sorted({record.subject_id for record in val_records})
     train_sessions = sorted({record.session_id for record in train_records})
@@ -113,6 +133,9 @@ def run_development_experiment(
         split_result,
         effective_config,
     )
+    checkpoint_path = training_result.checkpoint_path
+    if checkpoint_path is None:
+        raise RuntimeError("Training completed without writing the required checkpoint.")
     experiment = DevelopmentExperiment(
         git_sha=git_sha.strip(),
         manifest_name=manifest.dataset_name,
@@ -133,7 +156,7 @@ def run_development_experiment(
         epoch_count=len(training_result.train_losses),
         best_checkpoint_epoch=training_result.best_epoch,
         metrics=training_result.evaluation_report.to_dict(),
-        artifact_sha256=_digest_file(training_result.checkpoint_path),
+        artifact_sha256=_digest_file(checkpoint_path),
         is_synthetic=is_synthetic,
     )
     return training_result, experiment
