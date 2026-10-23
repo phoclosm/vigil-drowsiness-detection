@@ -1,5 +1,6 @@
 """Data recording and schema representations for Vigil M2."""
 
+from vigil.ml.data.manifest import ApprovedDataManifest, ManifestRecording
 from vigil.ml.data.recorder import SessionExistsError, SessionRecorder
 from vigil.ml.data.schema import (
     CANONICAL_CLASSES,
@@ -16,10 +17,12 @@ from vigil.ml.data.schema import (
 
 __all__ = [
     "CANONICAL_CLASSES",
+    "ApprovedDataManifest",
     "CameraConfig",
     "FatigueLabel",
     "FeatureConfig",
     "LiveInputFrame",
+    "ManifestRecording",
     "PerclosConfig",
     "ProtocolConfig",
     "SampleRecord",
