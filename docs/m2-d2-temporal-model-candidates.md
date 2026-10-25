@@ -19,6 +19,21 @@ All candidates accept `(batch, 60, 8)` `float32` windows and emit raw
 prediction. `predict_proba()` and `predict()` provide the same convenience
 interface across candidates.
 
+## Shared training path
+
+`train_temporal_classifier(..., model_type="gru")` preserves the existing GRU
+default. The explicit values `"gru"`, `"lstm"`, and `"tcn"` select the
+corresponding candidate through one shared pipeline: grouped splitting,
+training-only normalization, locked window extraction, deterministic seeded
+batches, cross-entropy optimization, validation-loss checkpoint selection, and
+training provenance. Candidate checkpoints use
+`best_<model_type>_checkpoint.pt`; the default GRU filename remains
+`best_gru_checkpoint.pt`.
+
+The current bundle exporter and live inference loader remain GRU-specific.
+LSTM and TCN training mechanics are verified here, but their checkpoints are
+not claimed to be exportable or deployable through that existing runtime path.
+
 The implementation is limited to architecture and contract tests. No model
 sweep, hyperparameter ranking, checkpoint selection, calibration, or
 real-world performance claim is made. Authorized labelled development data and
