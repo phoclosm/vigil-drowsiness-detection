@@ -6,8 +6,11 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, LOCKED_WINDOW_LENGTH
-from vigil.ml.models import (
+from vigil.ml.dataset.config import (  # noqa: E402
+    LOCKED_FEATURE_CHANNELS,
+    LOCKED_WINDOW_LENGTH,
+)
+from vigil.ml.models import (  # noqa: E402
     GRUConfig,
     GRUTemporalClassifier,
     LSTMConfig,
