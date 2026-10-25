@@ -17,6 +17,16 @@ from vigil.ml.models import (
 )
 
 
+def test_default_tcn_receptive_field_covers_locked_window() -> None:
+    config = TCNConfig()
+    receptive_field = 1 + sum(
+        (config.kernel_size - 1) * dilation for dilation in config.dilations
+    )
+
+    assert receptive_field == 63
+    assert receptive_field >= LOCKED_WINDOW_LENGTH
+
+
 @pytest.mark.parametrize(
     ("model_type", "config"),
     [

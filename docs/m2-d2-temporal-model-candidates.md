@@ -8,8 +8,10 @@ GRU baseline or the runtime data contract.
 - `GRUTemporalClassifier` remains the mandatory baseline.
 - `LSTMTemporalClassifier` is a single-direction LSTM candidate.
 - `TCNTemporalClassifier` is a dilated, left-padded 1-D convolutional
-  candidate. Left padding preserves causality: each timestep depends only on
-  the current and preceding observations.
+  candidate with default kernel size 3 and dilations `(1, 2, 4, 8, 16)`.
+  Its theoretical receptive field is 63 frames, covering the complete
+  60-frame window. Left padding preserves causality: each timestep depends
+  only on the current and preceding observations.
 
 All candidates accept `(batch, 60, 8)` `float32` windows and emit raw
 `(batch, 3)` logits in canonical order `ACTIVE=0`, `DROWSY=1`, and

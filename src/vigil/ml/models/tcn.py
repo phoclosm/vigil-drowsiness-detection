@@ -30,7 +30,7 @@ class TCNConfig:
     input_dim: int = len(LOCKED_FEATURE_CHANNELS)
     hidden_dim: int = 32
     kernel_size: int = 3
-    dilations: tuple[int, ...] = (1, 2, 4)
+    dilations: tuple[int, ...] = (1, 2, 4, 8, 16)
     num_classes: int = 3
     dropout: float = 0.0
 
