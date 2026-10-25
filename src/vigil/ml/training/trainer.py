@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -32,6 +32,20 @@ class TemporalClassifier(Protocol):
     """Shared runtime surface required by the training loop."""
 
     def __call__(self, inputs: Any) -> Any: ...
+
+    def train(self, mode: bool = True) -> Any: ...
+
+    def eval(self) -> Any: ...
+
+    def parameters(self) -> Iterable[Any]: ...
+
+    def state_dict(self) -> dict[str, Any]: ...
+
+    def load_state_dict(
+        self,
+        state_dict: Mapping[str, Any],
+        strict: bool = True,
+    ) -> Any: ...
 
     def predict(self, inputs: Any) -> Any: ...
 
