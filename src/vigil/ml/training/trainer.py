@@ -123,6 +123,38 @@ def train_temporal_classifier(
     *,
     model_type: str = "gru",
 ) -> TrainingResult:
+    """Train using the existing deterministic grouped-splitting behavior."""
+    return _train_temporal_classifier(
+        records,
+        config,
+        explicit_partitions=None,
+    )
+
+
+def train_temporal_classifier_on_partitions(
+    train_records: list[SampleRecord],
+    val_records: list[SampleRecord],
+    split_result: DatasetGroupSplitResult,
+    config: TrainingConfig | None = None,
+) -> TrainingResult:
+    """Train on caller-validated partitions without creating a second split."""
+    if not train_records or not val_records:
+        raise ValueError("Explicit training and validation partitions must both be non-empty.")
+    return _train_temporal_classifier(
+        train_records + val_records,
+        config,
+        explicit_partitions=(train_records, val_records, split_result),
+    )
+
+
+def _train_temporal_classifier(
+    records: list[SampleRecord],
+    config: TrainingConfig | None = None,
+    explicit_partitions: tuple[
+        list[SampleRecord], list[SampleRecord], DatasetGroupSplitResult
+    ]
+    | None = None,
+) -> TrainingResult:
     """Execute reproducible temporal classifier training from canonical SampleRecord data.
 
     Pipeline Integrity:
@@ -170,12 +202,15 @@ def train_temporal_classifier(
     # 1. Deterministic seeding
     seed_everything(config.seed)
 
-    # 2. Split records by group (subject-first, session-fallback)
-    train_records, val_records, split_result = split_records_by_group(
-        records,
-        train_ratio=config.train_ratio,
-        seed=config.seed,
-    )
+    # 2. Split records, or use the manifest-defined partitions supplied by the caller.
+    if explicit_partitions is None:
+        train_records, val_records, split_result = split_records_by_group(
+            records,
+            train_ratio=config.train_ratio,
+            seed=config.seed,
+        )
+    else:
+        train_records, val_records, split_result = explicit_partitions
 
     if not train_records or not val_records:
         raise ValueError(
