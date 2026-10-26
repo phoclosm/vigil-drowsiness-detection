@@ -12,6 +12,8 @@ from vigil.ml.baseline.evaluation import BaselineEvaluationReport
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, LOCKED_WINDOW_LENGTH
 from vigil.ml.models.gru import GRUConfig, GRUTemporalClassifier
+from vigil.ml.models.lstm import LSTMTemporalClassifier
+from vigil.ml.models.tcn import TCNTemporalClassifier
 from vigil.ml.training.config import TrainingConfig
 from vigil.ml.training.trainer import (
     TrainingResult,
@@ -83,6 +85,13 @@ def generate_synthetic_session(
         )
         for i in range(num_frames)
     ]
+
+
+def make_training_records() -> list[SampleRecord]:
+    records: list[SampleRecord] = []
+    records.extend(generate_synthetic_session("s1", "subject_1", 75, label_id=0))
+    records.extend(generate_synthetic_session("s2", "subject_2", 75, label_id=1))
+    return records
 
 
 class TestGRUModelArchitecture:
@@ -183,6 +192,64 @@ class TestGRUModelArchitecture:
         monkeypatch.setattr(gru, "HAS_TORCH", False)
         with pytest.raises(ImportError, match="PyTorch is required to instantiate GRUTemporalClassifier"):
             gru.GRUTemporalClassifier()
+
+
+@pytest.mark.parametrize(
+    ("model_type", "model_class"),
+    [
+        ("gru", GRUTemporalClassifier),
+        ("lstm", LSTMTemporalClassifier),
+        ("tcn", TCNTemporalClassifier),
+    ],
+)
+def test_training_pipeline_supports_temporal_candidates(model_type, model_class) -> None:
+    result = train_temporal_classifier(
+        make_training_records(),
+        TrainingConfig(max_epochs=1, batch_size=4, hidden_dim=8, seed=17),
+        model_type=model_type,
+    )
+
+    assert isinstance(result, TrainingResult)
+    assert isinstance(result.model, model_class)
+    assert result.model_type == model_type
+    assert result.best_epoch == 1
+    assert len(result.best_checkpoint_state) > 0
+    assert result.evaluation_report.total_samples > 0
+    assert result.training_provenance["strategy"] == "subject"
+    logits = result.model(
+        torch.zeros(1, LOCKED_WINDOW_LENGTH, len(LOCKED_FEATURE_CHANNELS))
+    )
+    assert logits.shape == (1, 3)
+    assert result.model.predict(logits.new_zeros((1, 60, 8))).item() in (0, 1, 2)
+
+
+def test_training_pipeline_rejects_unsupported_model_type() -> None:
+    with pytest.raises(ValueError, match="Unsupported model_type"):
+        train_temporal_classifier(make_training_records(), model_type="transformer")
+
+
+def test_candidate_checkpoint_paths_do_not_overwrite_gru(
+    tmp_path: Path,
+) -> None:
+    output_dir = str(tmp_path / "checkpoints")
+    config = TrainingConfig(max_epochs=1, batch_size=4, hidden_dim=8, output_dir=output_dir)
+    records = make_training_records()
+
+    gru_result = train_temporal_classifier(records, config)
+    lstm_result = train_temporal_classifier(records, config, model_type="lstm")
+    tcn_result = train_temporal_classifier(records, config, model_type="tcn")
+
+    assert gru_result.checkpoint_path == os.path.join(output_dir, "best_gru_checkpoint.pt")
+    assert lstm_result.checkpoint_path == os.path.join(output_dir, "best_lstm_checkpoint.pt")
+    assert tcn_result.checkpoint_path == os.path.join(output_dir, "best_tcn_checkpoint.pt")
+    assert all(
+        path is not None and os.path.exists(path)
+        for path in (
+            gru_result.checkpoint_path,
+            lstm_result.checkpoint_path,
+            tcn_result.checkpoint_path,
+        )
+    )
 
 
 class TestTrainingPipeline:

@@ -17,7 +17,7 @@ class TrainingConfig:
         weight_decay: L2 regularization penalty for Adam. Default 1e-4.
         seed: Deterministic random seed for Python, NumPy, PyTorch, and DataLoaders. Default 42.
         train_ratio: Proportion of groups assigned to training partition. Default 0.75.
-        hidden_dim: Number of hidden units in the GRU cell. Default 64.
+        hidden_dim: Hidden representation width used by each temporal candidate. Default 64.
         output_dir: Optional filesystem directory path to save best model checkpoint. Default None.
     """
 

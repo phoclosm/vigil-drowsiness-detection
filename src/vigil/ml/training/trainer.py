@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from vigil.ml.baseline.evaluation import BaselineEvaluationReport, compute_metrics
 from vigil.ml.data.schema import SampleRecord
@@ -13,6 +14,8 @@ from vigil.ml.dataset.dataset import FatigueWindowDataset
 from vigil.ml.dataset.normalizer import FeatureNormalizer
 from vigil.ml.dataset.splitter import DatasetGroupSplitResult, split_records_by_group
 from vigil.ml.models.gru import GRUConfig, GRUTemporalClassifier
+from vigil.ml.models.lstm import LSTMConfig, LSTMTemporalClassifier
+from vigil.ml.models.tcn import TCNConfig, TCNTemporalClassifier
 from vigil.ml.training.config import TrainingConfig
 
 try:
@@ -23,6 +26,35 @@ except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
     DataLoader = object  # type: ignore[misc,assignment]
     HAS_TORCH = False
+
+
+class TemporalClassifier(Protocol):
+    """Shared runtime surface required by the training loop."""
+
+    def __call__(self, inputs: Any) -> Any: ...
+
+    def train(self, mode: bool = True) -> Any: ...
+
+    def eval(self) -> Any: ...
+
+    def parameters(self) -> Iterable[Any]: ...
+
+    def state_dict(self) -> dict[str, Any]: ...
+
+    def load_state_dict(
+        self,
+        state_dict: Mapping[str, Any],
+        strict: bool = True,
+    ) -> Any: ...
+
+    def predict(self, inputs: Any) -> Any: ...
+
+
+MODEL_FACTORIES: dict[str, Callable[[int], TemporalClassifier]] = {
+    "gru": lambda hidden_dim: GRUTemporalClassifier(GRUConfig(hidden_dim=hidden_dim)),
+    "lstm": lambda hidden_dim: LSTMTemporalClassifier(LSTMConfig(hidden_dim=hidden_dim)),
+    "tcn": lambda hidden_dim: TCNTemporalClassifier(TCNConfig(hidden_dim=hidden_dim)),
+}
 
 
 def seed_everything(seed: int) -> None:
@@ -49,7 +81,7 @@ class TrainingResult:
     """Outcome and artifacts of a temporal classifier training run.
 
     Attributes:
-        model: Trained GRUTemporalClassifier loaded with best validation weights.
+        model: Trained temporal classifier loaded with best validation weights.
         best_epoch: 1-indexed epoch number that achieved the lowest validation loss.
         best_val_loss: Lowest validation cross-entropy loss recorded.
         train_losses: Epoch-by-epoch training loss trajectory.
@@ -61,7 +93,7 @@ class TrainingResult:
         checkpoint_path: Path to disk checkpoint if output_dir was specified, else None.
     """
 
-    model: GRUTemporalClassifier
+    model: TemporalClassifier
     best_epoch: int
     best_val_loss: float
     train_losses: list[float]
@@ -71,6 +103,7 @@ class TrainingResult:
     split_result: DatasetGroupSplitResult
     normalizer: FeatureNormalizer
     checkpoint_path: str | None = None
+    model_type: str = "gru"
 
     @property
     def training_provenance(self) -> dict[str, Any]:
@@ -87,6 +120,8 @@ class TrainingResult:
 def train_temporal_classifier(
     records: list[SampleRecord],
     config: TrainingConfig | None = None,
+    *,
+    model_type: str = "gru",
 ) -> TrainingResult:
     """Execute reproducible temporal classifier training from canonical SampleRecord data.
 
@@ -104,6 +139,8 @@ def train_temporal_classifier(
     Args:
         records: List of SampleRecord instances.
         config: TrainingConfig specifying hyperparameters. Default uses sensible defaults.
+        model_type: Candidate to train: ``"gru"``, ``"lstm"``, or ``"tcn"``.
+            Defaults to ``"gru"`` for backward compatibility.
 
     Returns:
         TrainingResult with the fitted model, loss histories, best checkpoint, and evaluation report.
@@ -116,6 +153,12 @@ def train_temporal_classifier(
         raise ImportError(
             "PyTorch is required for temporal classifier training. "
             "Install PyTorch with 'pip install torch'."
+        )
+
+    if not isinstance(model_type, str) or model_type not in MODEL_FACTORIES:
+        supported = ", ".join(sorted(MODEL_FACTORIES))
+        raise ValueError(
+            f"Unsupported model_type '{model_type}'. Expected one of: {supported}."
         )
 
     if config is None:
@@ -175,8 +218,7 @@ def train_temporal_classifier(
     )
 
     # 6. Instantiate model, loss, and optimizer
-    model_config = GRUConfig(hidden_dim=config.hidden_dim)
-    model = GRUTemporalClassifier(model_config)
+    model = MODEL_FACTORIES[model_type](config.hidden_dim)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -240,7 +282,9 @@ def train_temporal_classifier(
     checkpoint_path: str | None = None
     if config.output_dir is not None:
         os.makedirs(config.output_dir, exist_ok=True)
-        checkpoint_path = os.path.join(config.output_dir, "best_gru_checkpoint.pt")
+        checkpoint_path = os.path.join(
+            config.output_dir, f"best_{model_type}_checkpoint.pt"
+        )
         torch.save(best_state_dict, checkpoint_path)
 
     # 9. Compute validation metrics using canonical evaluation helper
@@ -270,4 +314,5 @@ def train_temporal_classifier(
         split_result=split_result,
         normalizer=normalizer,
         checkpoint_path=checkpoint_path,
+        model_type=model_type,
     )
