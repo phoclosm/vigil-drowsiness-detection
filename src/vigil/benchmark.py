@@ -11,7 +11,7 @@ from typing import Sequence
 from vigil.runtime.capture import CaptureConfig, CaptureError, CaptureStream
 from vigil.runtime.environment import opencv_version
 from vigil.runtime.eye_features import EyeFeatureStream, EyeFeatureStreamConfig
-from vigil.runtime.landmarks import LandmarkError, MediaPipeFaceLandmarkDetector
+from vigil.runtime.landmarks import LandmarkError
 from vigil.runtime.performance import (
     BenchmarkResult,
     BenchmarkRunner,
@@ -19,6 +19,7 @@ from vigil.runtime.performance import (
     format_benchmark_result,
 )
 from vigil.runtime.preprocessing import VisionPreprocessingError, VisionPreprocessor
+from vigil.runtime.tasks_landmarks import create_detector
 
 
 def _positive_int(value: str) -> int:
@@ -58,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--webcam", type=_non_negative_int, metavar="INDEX")
     source.add_argument("--video", type=Path, metavar="PATH")
     parser.add_argument("--frames", type=_positive_int, required=True)
+    parser.add_argument("--landmark-backend", choices=("tasks", "legacy"), default="tasks")
+    parser.add_argument("--landmark-model", type=Path)
     parser.add_argument(
         "--closure-threshold-ear",
         type=_ear_threshold,
@@ -92,7 +95,7 @@ def _run_benchmark(args: argparse.Namespace) -> BenchmarkResult:
         )
     )
     with CaptureStream(capture_config) as capture:
-        with MediaPipeFaceLandmarkDetector() as detector:
+        with create_detector(args.landmark_backend, args.landmark_model) as detector:
             preprocessor = VisionPreprocessor(detector, feature_stream)
             return BenchmarkRunner().run(
                 read_frame=capture.read,

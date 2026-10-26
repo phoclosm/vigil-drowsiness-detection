@@ -14,18 +14,27 @@ dependencies = [
 
 [project.optional-dependencies]
 desktop = [
+    "mediapipe==0.10.35",
+    "numpy>=2",
+    "opencv-contrib-python==5.0.0.93",
+]
+legacy = [
     "mediapipe==0.10.21",
     "numpy>=1.26,<2",
     "opencv-contrib-python==4.11.0.86",
 ]
 opencv5 = [
-    "opencv-python==5.0.0.93",
+    "mediapipe==0.10.35",
+    "opencv-contrib-python==5.0.0.93",
     "numpy>=2",
 ]
 dev = [
     "pytest>=8",
     "ruff==0.8.4",
+    "httpx==0.28.1",
 ]
+cloud = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "pydantic>=2.9,<3"]
+client = ["httpx==0.28.1", "pydantic>=2.9,<3"]
 ml = [
     "torch>=2.2",
 ]
