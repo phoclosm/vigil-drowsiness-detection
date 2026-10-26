@@ -21,6 +21,17 @@ order, eye indices, normalized geometry and feature math are unchanged.
 The `legacy` extra preserves MediaPipe 0.10.21, NumPy below 2 and OpenCV contrib
 4.11.0.86 for comparison with `--landmark-backend legacy`.
 
+On Ubuntu, Tasks' native library also needs GLES/EGL even with CPU inference:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libgl1 libegl1 libgles2 libglib2.0-0 libportaudio2
+```
+
+The first expanded CI run caught missing `libGLESv2.so.2` during real backend
+initialization after the deterministic suite passed. The dependency is now
+explicit in CI; the camera-free cloud container does not install it.
+
 The `opencv5` extra is now an alias for the modern desktop dependency set:
 
 ```powershell
