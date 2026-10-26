@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -23,12 +24,20 @@ def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
     @asynccontextmanager
     async def lifespan(app):
         app.state.predictor = None
+        temporary_path = None
         try:
-            app.state.predictor = predictor_factory(bundle_path or resolve_bundle())
+            path = bundle_path or resolve_bundle()
+            if bundle_path is None and not os.environ.get("VIGIL_BUNDLE_PATH"):
+                temporary_path = path
+            app.state.predictor = predictor_factory(path)
         except Exception:
             logger.error("model_unavailable")
-        yield
-        app.state.predictor = None
+        try:
+            yield
+        finally:
+            app.state.predictor = None
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     app = FastAPI(lifespan=lifespan, debug=False)
 
@@ -83,6 +92,8 @@ def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
             "window_length": 60,
             "stride": 15,
             "input_encoding": "raw_with_masks_v1",
+            "max_frame_gap": value.bundle.window_config.max_frame_gap,
+            "max_time_gap_ms": value.bundle.window_config.max_time_gap_ms,
         }
 
     @app.post("/predict", response_model=PredictResponse)

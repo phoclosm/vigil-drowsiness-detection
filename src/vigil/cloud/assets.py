@@ -34,7 +34,11 @@ def resolve_bundle():
         config=Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2}),
     )
     body = client.get_object(Bucket=parts.netloc, Key=parts.path.lstrip("/"))["Body"]
-    path = Path("/tmp/vigil-bundle.pt")
+    import tempfile
+
+    handle, filename = tempfile.mkstemp(prefix="vigil-bundle-", suffix=".pt")
+    os.close(handle)
+    path = Path(filename)
     checksum = hashlib.sha256()
     size = 0
     try:

@@ -1,10 +1,12 @@
 """Container entrypoint with an explicit listen port."""
 
 import os
+import logging
 
 import uvicorn
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     uvicorn.run(
         "vigil.cloud.app:create_app",
         factory=True,

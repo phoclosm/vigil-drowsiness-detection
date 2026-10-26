@@ -79,6 +79,10 @@ class CloudTransport:
             if not re.fullmatch(r"[a-f0-9]{64}", info["bundle_id"]):
                 raise ValueError("invalid bundle identifier")
             self.bundle_id = info["bundle_id"]
+            self.window_config = WindowConfig(
+                max_frame_gap=info["max_frame_gap"],
+                max_time_gap_ms=info["max_time_gap_ms"],
+            )
         except (KeyError, TypeError, ValueError):
             raise ModelInferenceError("cloud model contract mismatch") from None
         return self
@@ -115,7 +119,7 @@ class CloudInferenceEngine:
 
     def __init__(self, transport):
         self.transport = transport
-        self.config = WindowConfig()
+        self.config = getattr(transport, "window_config", WindowConfig())
         self.reset()
 
     def reset(self):
