@@ -177,6 +177,14 @@ def test_trusted_partition_direct_construction_cannot_claim_validation() -> None
     )
     partition = TrustedPartition(train, validation, held_out, identity)
     assert partition.manifest_verified is False
+    with pytest.raises(TypeError, match="manifest_verified"):
+        TrustedPartition(
+            train,
+            validation,
+            held_out,
+            identity,
+            manifest_verified=True,  # type: ignore[call-arg]
+        )
 
 
 def test_trusted_partition_rejects_modified_content_and_cross_phase_records() -> None:
