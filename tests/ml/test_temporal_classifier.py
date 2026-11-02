@@ -11,6 +11,7 @@ import torch
 from vigil.ml.baseline.evaluation import BaselineEvaluationReport
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, LOCKED_WINDOW_LENGTH
+from vigil.ml.dataset.splitter import split_records_by_group
 from vigil.ml.models.gru import GRUConfig, GRUTemporalClassifier
 from vigil.ml.models.lstm import LSTMTemporalClassifier
 from vigil.ml.models.tcn import TCNTemporalClassifier
@@ -19,6 +20,7 @@ from vigil.ml.training.trainer import (
     TrainingResult,
     seed_everything,
     train_temporal_classifier,
+    train_temporal_classifier_on_partitions,
 )
 
 
@@ -221,6 +223,38 @@ def test_training_pipeline_supports_temporal_candidates(model_type, model_class)
     )
     assert logits.shape == (1, 3)
     assert result.model.predict(logits.new_zeros((1, 60, 8))).item() in (0, 1, 2)
+
+
+@pytest.mark.parametrize(
+    ("model_type", "model_class"),
+    [
+        ("gru", GRUTemporalClassifier),
+        ("lstm", LSTMTemporalClassifier),
+        ("tcn", TCNTemporalClassifier),
+    ],
+)
+def test_explicit_partition_training_supports_temporal_candidates(
+    model_type, model_class
+) -> None:
+    records = make_training_records()
+    train_records, val_records, split_result = split_records_by_group(
+        records,
+        train_ratio=0.5,
+        seed=17,
+    )
+
+    result = train_temporal_classifier_on_partitions(
+        train_records,
+        val_records,
+        split_result,
+        TrainingConfig(max_epochs=1, batch_size=4, hidden_dim=8, seed=17),
+        model_type=model_type,
+    )
+
+    assert isinstance(result.model, model_class)
+    assert result.model_type == model_type
+    assert result.training_provenance["strategy"] == split_result.strategy
+    assert result.evaluation_report.total_samples > 0
 
 
 def test_training_pipeline_rejects_unsupported_model_type() -> None:

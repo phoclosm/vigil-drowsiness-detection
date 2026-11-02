@@ -128,6 +128,7 @@ def train_temporal_classifier(
         records,
         config,
         explicit_partitions=None,
+        model_type=model_type,
     )
 
 
@@ -136,6 +137,8 @@ def train_temporal_classifier_on_partitions(
     val_records: list[SampleRecord],
     split_result: DatasetGroupSplitResult,
     config: TrainingConfig | None = None,
+    *,
+    model_type: str = "gru",
 ) -> TrainingResult:
     """Train on caller-validated partitions without creating a second split."""
     if not train_records or not val_records:
@@ -144,6 +147,7 @@ def train_temporal_classifier_on_partitions(
         train_records + val_records,
         config,
         explicit_partitions=(train_records, val_records, split_result),
+        model_type=model_type,
     )
 
 
@@ -154,6 +158,8 @@ def _train_temporal_classifier(
         list[SampleRecord], list[SampleRecord], DatasetGroupSplitResult
     ]
     | None = None,
+    *,
+    model_type: str = "gru",
 ) -> TrainingResult:
     """Execute reproducible temporal classifier training from canonical SampleRecord data.
 
