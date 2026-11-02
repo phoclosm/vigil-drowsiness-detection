@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, Literal, Mapping
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import Any, ClassVar, Literal, Mapping
 
 from vigil.ml.data.schema import SampleRecord
 from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS, LOCKED_STRIDE, LOCKED_WINDOW_LENGTH
@@ -150,13 +150,24 @@ class PartitionIdentity:
 
 @dataclass(frozen=True)
 class TrustedPartition:
-    """Validated records and identity for one complete approved partition set."""
+    """Validated records and identity for one complete approved partition set.
+
+    The private construction marker is an application-level integrity boundary.
+    It is not cryptographic proof against arbitrary Python code execution.
+    """
 
     train_records: tuple[SampleRecord, ...]
     validation_records: tuple[SampleRecord, ...]
     held_out_records: tuple[SampleRecord, ...]
     identity: PartitionIdentity
-    manifest_verified: bool = False
+    _validated_marker: object = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    _FACTORY_MARKER: ClassVar[object] = object()
+
+    @property
+    def manifest_verified(self) -> bool:
+        return self._validated_marker is self._FACTORY_MARKER
 
     @classmethod
     def from_partitions(
@@ -167,34 +178,32 @@ class TrustedPartition:
         split_strategy: str,
         *,
         manifest_digest: str,
-        approved_manifest: Any | None = None,
+        approved_manifest: Any,
     ) -> TrustedPartition:
-        manifest_verified = approved_manifest is not None
-        if approved_manifest is not None:
-            approved_manifest.validate_group_assignments()
-            if approved_manifest.split_strategy != split_strategy:
-                raise ValueError("Partition split strategy does not match the approved manifest.")
-            expected_manifest_digest = _compute_manifest_digest(approved_manifest)
-            if expected_manifest_digest != manifest_digest:
-                raise ValueError("Manifest digest does not match the approved manifest.")
-            split_groups = {
-                split: {
-                    (recording.subject_id, recording.session_id)
-                    for recording in approved_manifest.recordings_for_split(split)
-                }
-                for split in ("train", "validation", "held_out")
+        approved_manifest.validate_group_assignments()
+        if approved_manifest.split_strategy != split_strategy:
+            raise ValueError("Partition split strategy does not match the approved manifest.")
+        expected_manifest_digest = _compute_manifest_digest(approved_manifest)
+        if expected_manifest_digest != manifest_digest:
+            raise ValueError("Manifest digest does not match the approved manifest.")
+        split_groups = {
+            split: {
+                (recording.subject_id, recording.session_id)
+                for recording in approved_manifest.recordings_for_split(split)
             }
-            for split, records in zip(
-                ("train", "validation", "held_out"),
-                (train_records, validation_records, held_out_records),
+            for split in ("train", "validation", "held_out")
+        }
+        for split, records in zip(
+            ("train", "validation", "held_out"),
+            (train_records, validation_records, held_out_records),
+        ):
+            if any(
+                (record.subject_id, record.session_id) not in split_groups[split]
+                for record in records
             ):
-                if any(
-                    (record.subject_id, record.session_id) not in split_groups[split]
-                    for record in records
-                ):
-                    raise ValueError(
-                        f"Records do not belong to the approved manifest '{split}' split."
-                    )
+                raise ValueError(
+                    f"Records do not belong to the approved manifest '{split}' split."
+                )
         partitions = tuple(tuple(records) for records in (
             train_records,
             validation_records,
@@ -210,13 +219,13 @@ class TrustedPartition:
             split_strategy,
             manifest_digest=manifest_digest,
         )
-        return cls(
-            train_records=partitions[0],
-            validation_records=partitions[1],
-            held_out_records=partitions[2],
-            identity=identity,
-            manifest_verified=manifest_verified,
-        )
+        partition = object.__new__(cls)
+        object.__setattr__(partition, "train_records", partitions[0])
+        object.__setattr__(partition, "validation_records", partitions[1])
+        object.__setattr__(partition, "held_out_records", partitions[2])
+        object.__setattr__(partition, "identity", identity)
+        object.__setattr__(partition, "_validated_marker", cls._FACTORY_MARKER)
+        return partition
 
     @classmethod
     def from_manifest(

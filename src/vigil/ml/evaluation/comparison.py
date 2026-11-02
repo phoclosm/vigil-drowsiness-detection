@@ -34,6 +34,7 @@ from vigil.ml.provenance_types import (
     SelectionFreezeRecord,
     TrustedPartition,
     describe_candidate,
+    label_mapping_digest,
     sha256_digest,
 )
 from vigil.ml.provenance import (
@@ -264,6 +265,8 @@ def compare_candidates(
         raise ValueError("A verified training-only normalizer provenance is required.")
     if not trusted_partition.manifest_verified:
         raise ValueError("Candidate comparison requires a trusted approved manifest.")
+    if evaluation_identity.label_mapping_digest != label_mapping_digest():
+        raise ValueError("Candidate comparison requires the canonical M2 label mapping.")
     if normalizer.provenance != normalizer_provenance:
         raise ValueError("Supplied normalizer provenance does not match the fitted normalizer.")
     if not evaluation_identity.matches_partition(trusted_partition):

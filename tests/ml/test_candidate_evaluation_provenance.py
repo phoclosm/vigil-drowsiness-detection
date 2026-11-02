@@ -161,8 +161,22 @@ def test_trusted_partition_rejects_empty_complete_partitions(empty_index: int) -
     partitions[empty_index] = []
     with pytest.raises(ValueError, match="non-empty"):
         TrustedPartition.from_partitions(
-            *partitions, "subject", manifest_digest="manifest"
+            *partitions,
+            "subject",
+            manifest_digest=sha256_digest(manifest().to_dict()),
+            approved_manifest=manifest(),
         )
+
+
+def test_trusted_partition_direct_construction_cannot_claim_validation() -> None:
+    train = tuple(session("train", "subject_train"))
+    validation = tuple(session("validation", "subject_validation"))
+    held_out = tuple(session("held-out", "subject_held-out"))
+    identity = PartitionIdentity.from_partitions(
+        list(train), list(validation), list(held_out), "subject"
+    )
+    partition = TrustedPartition(train, validation, held_out, identity)
+    assert partition.manifest_verified is False
 
 
 def test_trusted_partition_rejects_modified_content_and_cross_phase_records() -> None:
@@ -409,6 +423,55 @@ def test_candidate_comparison_rejects_arbitrary_identity_and_forged_freeze() -> 
             code_git_sha="0" * 40,
             checkpoint_digests={"gru": checkpoint},
             selection_freeze=freeze,
+            is_synthetic=True,
+        )
+
+
+def test_candidate_comparison_requires_canonical_label_mapping() -> None:
+    train = session("train", "subject_train")
+    validation = session("validation", "subject_validation")
+    held_out = session("held-out", "subject_held-out")
+    trusted = trusted_partition(train, validation, held_out)
+    normalizer = FeatureNormalizer().fit(
+        train,
+        manifest_digest=trusted.identity.manifest_digest,
+        trusted_partition=trusted,
+    )
+    model = GRUTemporalClassifier(GRUConfig(hidden_dim=4))
+    provenance = CandidateTrainingProvenance(
+        candidate=describe_candidate(model),
+        seed=42,
+        batch_size=4,
+        max_epochs=1,
+        optimizer="Adam",
+        learning_rate=1e-3,
+        weight_decay=0.0,
+        selection_metric="macro_f1",
+    )
+    with pytest.raises(ValueError, match="canonical M2 label mapping"):
+        compare_candidates(
+            {"gru": model},
+            validation,
+            normalizer,
+            evaluation_identity=replace(
+                EvaluationIdentity.from_partition(
+                    dataset_name="synthetic",
+                    dataset_version="1",
+                    partition=trusted,
+                    label_mapping_digest=label_mapping_digest(),
+                ),
+                label_mapping_digest=sha256_digest({"ACTIVE": 0, "DROWSY": 1}),
+            ),
+            normalizer_provenance=normalizer.provenance,
+            candidate_provenance={"gru": provenance},
+            trusted_partition=trusted,
+            evaluation_phase="development_validation",
+            metadata=IndependentEvaluationMetadata(
+                development_strategy="subject",
+                evaluation_subjects=["subject_validation"],
+                evaluation_sessions=["validation"],
+            ),
+            code_git_sha="0" * 40,
             is_synthetic=True,
         )
 
