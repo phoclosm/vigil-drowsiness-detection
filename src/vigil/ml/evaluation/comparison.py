@@ -32,8 +32,8 @@ from vigil.ml.provenance_types import (
     EvaluationPhase,
     NormalizerProvenance,
     SelectionFreezeRecord,
+    TrustedPartition,
     describe_candidate,
-    record_set_digest,
     sha256_digest,
 )
 from vigil.ml.provenance import (
@@ -239,6 +239,7 @@ def compare_candidates(
     evaluation_identity: EvaluationIdentity,
     normalizer_provenance: NormalizerProvenance,
     candidate_provenance: Mapping[str, CandidateTrainingProvenance],
+    trusted_partition: TrustedPartition,
     evaluation_phase: EvaluationPhase,
     metadata: IndependentEvaluationMetadata,
     code_git_sha: str,
@@ -261,20 +262,32 @@ def compare_candidates(
         raise ValueError("Checkpoint digests must have one entry per candidate.")
     if normalizer.provenance is None or normalizer_provenance.status != "verified":
         raise ValueError("A verified training-only normalizer provenance is required.")
+    if not trusted_partition.manifest_verified:
+        raise ValueError("Candidate comparison requires a trusted approved manifest.")
     if normalizer.provenance != normalizer_provenance:
         raise ValueError("Supplied normalizer provenance does not match the fitted normalizer.")
-    expected_record_digest = (
-        evaluation_identity.validation_record_digest
-        if evaluation_phase == "development_validation"
-        else evaluation_identity.held_out_record_digest
-    )
-    if record_set_digest(records) != expected_record_digest:
-        raise ValueError("Evaluation records do not match the declared evaluation identity.")
+    if not evaluation_identity.matches_partition(trusted_partition):
+        raise ValueError("Evaluation identity is not bound to the trusted partition.")
+    if not trusted_partition.contains_exact_records(records, evaluation_phase):
+        raise ValueError("Evaluation records do not match the trusted partition.")
+    if (
+        normalizer_provenance.training_partition_digest != trusted_partition.digest
+        or normalizer_provenance.source_manifest_digest
+        != trusted_partition.identity.manifest_digest
+    ):
+        raise ValueError("Normalizer provenance is not bound to the trusted training partition.")
     if evaluation_phase == "final_held_out":
         if selection_freeze is None:
             raise ValueError("Final held-out evaluation requires a selection freeze record.")
+        selection_freeze.validate()
         if selection_freeze.evaluation_identity_digest != evaluation_identity.digest:
             raise ValueError("Selection freeze does not match the evaluation identity.")
+        if selection_freeze.partition_digest != trusted_partition.digest:
+            raise ValueError("Selection freeze does not match the trusted partition.")
+        if selection_freeze.code_git_sha != code_git_sha:
+            raise ValueError("Selection freeze code SHA does not match the evaluation.")
+        if selection_freeze.selection_protocol_version != evaluation_identity.protocol_version:
+            raise ValueError("Selection freeze protocol does not match the evaluation identity.")
     elif selection_freeze is not None:
         raise ValueError("Development validation cannot include a selection freeze record.")
 
@@ -333,6 +346,10 @@ def compare_candidates(
             raise ValueError("Selection freeze candidate identity does not match the model.")
         if selected.candidate.config_digest != selection_freeze.selected_model_config_digest:
             raise ValueError("Selection freeze configuration does not match the candidate.")
+        if selection_freeze.frozen_candidate_identity_digest != sha256_digest(
+            selected.candidate.to_dict()
+        ):
+            raise ValueError("Selection freeze candidate identity does not match the model.")
         if checkpoint_digests is None or (
             checkpoint_digests.get(selection_freeze.frozen_candidate_type)
             != selection_freeze.selected_checkpoint_sha256

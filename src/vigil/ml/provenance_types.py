@@ -62,6 +62,10 @@ def manifest_digest(manifest: Any) -> str:
     return sha256_digest(manifest.to_dict())
 
 
+_compute_manifest_digest = manifest_digest
+
+
+
 def label_mapping_digest() -> str:
     return sha256_digest(dict(CANONICAL_LABEL_MAPPING))
 
@@ -80,6 +84,7 @@ class PartitionIdentity:
     validation_sessions: tuple[str, ...]
     held_out_sessions: tuple[str, ...]
     split_strategy: str
+    manifest_digest: str
 
     @classmethod
     def from_partitions(
@@ -88,8 +93,12 @@ class PartitionIdentity:
         validation_records: list[SampleRecord],
         held_out_records: list[SampleRecord],
         split_strategy: str,
+        *,
+        manifest_digest: str = "",
     ) -> PartitionIdentity:
         partitions = (train_records, validation_records, held_out_records)
+        if any(not records for records in partitions):
+            raise ValueError("Train, validation, and held-out partitions must be non-empty.")
         all_ids = [record.sample_id for records in partitions for record in records]
         if len(all_ids) != len(set(all_ids)):
             raise ValueError("Record IDs overlap between partitions.")
@@ -116,6 +125,7 @@ class PartitionIdentity:
             validation_sessions=groups[1][1],
             held_out_sessions=groups[2][1],
             split_strategy=split_strategy,
+            manifest_digest=manifest_digest,
         )
 
     @property
@@ -134,7 +144,127 @@ class PartitionIdentity:
             "validation_sessions": list(self.validation_sessions),
             "held_out_sessions": list(self.held_out_sessions),
             "split_strategy": self.split_strategy,
+            "manifest_digest": self.manifest_digest,
         }
+
+
+@dataclass(frozen=True)
+class TrustedPartition:
+    """Validated records and identity for one complete approved partition set."""
+
+    train_records: tuple[SampleRecord, ...]
+    validation_records: tuple[SampleRecord, ...]
+    held_out_records: tuple[SampleRecord, ...]
+    identity: PartitionIdentity
+    manifest_verified: bool = False
+
+    @classmethod
+    def from_partitions(
+        cls,
+        train_records: list[SampleRecord] | tuple[SampleRecord, ...],
+        validation_records: list[SampleRecord] | tuple[SampleRecord, ...],
+        held_out_records: list[SampleRecord] | tuple[SampleRecord, ...],
+        split_strategy: str,
+        *,
+        manifest_digest: str,
+        approved_manifest: Any | None = None,
+    ) -> TrustedPartition:
+        manifest_verified = approved_manifest is not None
+        if approved_manifest is not None:
+            approved_manifest.validate_group_assignments()
+            if approved_manifest.split_strategy != split_strategy:
+                raise ValueError("Partition split strategy does not match the approved manifest.")
+            expected_manifest_digest = _compute_manifest_digest(approved_manifest)
+            if expected_manifest_digest != manifest_digest:
+                raise ValueError("Manifest digest does not match the approved manifest.")
+            split_groups = {
+                split: {
+                    (recording.subject_id, recording.session_id)
+                    for recording in approved_manifest.recordings_for_split(split)
+                }
+                for split in ("train", "validation", "held_out")
+            }
+            for split, records in zip(
+                ("train", "validation", "held_out"),
+                (train_records, validation_records, held_out_records),
+            ):
+                if any(
+                    (record.subject_id, record.session_id) not in split_groups[split]
+                    for record in records
+                ):
+                    raise ValueError(
+                        f"Records do not belong to the approved manifest '{split}' split."
+                    )
+        partitions = tuple(tuple(records) for records in (
+            train_records,
+            validation_records,
+            held_out_records,
+        ))
+        for records in partitions:
+            for record in records:
+                record.validate()
+        identity = PartitionIdentity.from_partitions(
+            list(partitions[0]),
+            list(partitions[1]),
+            list(partitions[2]),
+            split_strategy,
+            manifest_digest=manifest_digest,
+        )
+        return cls(
+            train_records=partitions[0],
+            validation_records=partitions[1],
+            held_out_records=partitions[2],
+            identity=identity,
+            manifest_verified=manifest_verified,
+        )
+
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest: Any,
+        *,
+        train_records: list[SampleRecord] | tuple[SampleRecord, ...],
+        validation_records: list[SampleRecord] | tuple[SampleRecord, ...],
+        held_out_records: list[SampleRecord] | tuple[SampleRecord, ...],
+    ) -> TrustedPartition:
+        """Create a trusted partition from a validated ApprovedDataManifest."""
+        return cls.from_partitions(
+            train_records,
+            validation_records,
+            held_out_records,
+            manifest.split_strategy,
+            manifest_digest=_compute_manifest_digest(manifest),
+            approved_manifest=manifest,
+        )
+
+    @property
+    def digest(self) -> str:
+        return self.identity.digest
+
+    def records_for_phase(self, phase: EvaluationPhase) -> tuple[SampleRecord, ...]:
+        if phase == "development_validation":
+            return self.validation_records
+        if phase == "final_held_out":
+            return self.held_out_records
+        raise ValueError(f"Unsupported evaluation phase: {phase}.")
+
+    def contains_exact_records(
+        self,
+        records: list[SampleRecord] | tuple[SampleRecord, ...],
+        phase: EvaluationPhase,
+    ) -> bool:
+        expected = self.records_for_phase(phase)
+        return (
+            record_set_digest(list(records)) == record_set_digest(list(expected))
+            and {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in records
+            }
+            == {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in expected
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -160,6 +290,40 @@ class EvaluationIdentity:
             raise ValueError("Evaluation identity window settings do not match the locked contract.")
         if self.split_strategy not in {"subject", "session"}:
             raise ValueError("split_strategy must be 'subject' or 'session'.")
+
+    @classmethod
+    def from_partition(
+        cls,
+        *,
+        dataset_name: str,
+        dataset_version: str,
+        partition: TrustedPartition,
+        label_mapping_digest: str,
+        protocol_version: str = "m2-day3-v1",
+    ) -> EvaluationIdentity:
+        identity = partition.identity
+        return cls(
+            dataset_name=dataset_name,
+            dataset_version=dataset_version,
+            manifest_digest=identity.manifest_digest,
+            label_mapping_digest=label_mapping_digest,
+            split_strategy=identity.split_strategy,
+            train_record_digest=identity.train_record_digest,
+            validation_record_digest=identity.validation_record_digest,
+            held_out_record_digest=identity.held_out_record_digest,
+            partition_digest=partition.digest,
+            protocol_version=protocol_version,
+        )
+
+    def matches_partition(self, partition: TrustedPartition) -> bool:
+        expected = EvaluationIdentity.from_partition(
+            dataset_name=self.dataset_name,
+            dataset_version=self.dataset_version,
+            partition=partition,
+            label_mapping_digest=self.label_mapping_digest,
+            protocol_version=self.protocol_version,
+        )
+        return self == expected
 
     @property
     def digest(self) -> str:
@@ -193,6 +357,7 @@ class NormalizerProvenance:
     feature_channels: tuple[str, ...]
     source_manifest_digest: str
     parameter_digest: str
+    training_partition_digest: str = ""
     status: Literal["verified", "legacy_unverified"] = "verified"
 
     def __post_init__(self) -> None:
@@ -211,6 +376,7 @@ class NormalizerProvenance:
             "feature_channels": list(self.feature_channels),
             "source_manifest_digest": self.source_manifest_digest,
             "parameter_digest": self.parameter_digest,
+            "training_partition_digest": self.training_partition_digest,
             "status": self.status,
         }
 
@@ -329,3 +495,19 @@ class SelectionFreezeRecord:
                 "code_git_sha": self.code_git_sha,
             }.items()
         }
+
+    def validate(self) -> None:
+        """Validate required freeze-record fields without implying human governance."""
+        required = (
+            self.frozen_candidate_identity_digest,
+            self.selected_checkpoint_sha256,
+            self.selected_model_config_digest,
+            self.evaluation_identity_digest,
+            self.partition_digest,
+            self.selection_protocol_version,
+            self.authorization_evidence_ref,
+            self.frozen_at_utc,
+            self.code_git_sha,
+        )
+        if any(not isinstance(value, str) or not value.strip() for value in required):
+            raise ValueError("Selection freeze record has missing required fields.")

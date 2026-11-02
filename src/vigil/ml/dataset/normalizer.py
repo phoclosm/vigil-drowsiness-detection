@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vigil.ml.data.schema import SampleRecord
-from vigil.ml.provenance_types import NormalizerProvenance, record_set_digest, sha256_digest
+from vigil.ml.provenance_types import (
+    NormalizerProvenance,
+    TrustedPartition,
+    record_set_digest,
+    sha256_digest,
+)
 
 CONTINUOUS_FEATURE_NAMES: tuple[str, ...] = ("ear_avg", "blink_duration_ms", "perclos")
 
@@ -44,6 +49,7 @@ class FeatureNormalizer:
         training_records: list[SampleRecord],
         *,
         manifest_digest: str = "",
+        trusted_partition: TrustedPartition | None = None,
     ) -> FeatureNormalizer:
         """Fit means and standard deviations from valid training observations only.
 
@@ -55,6 +61,23 @@ class FeatureNormalizer:
         """
         if not training_records:
             raise ValueError("Cannot fit FeatureNormalizer on an empty training partition.")
+        if trusted_partition is not None:
+            if not trusted_partition.manifest_verified:
+                raise ValueError("A trusted approved manifest is required for verified lineage.")
+            if trusted_partition.identity.manifest_digest != manifest_digest:
+                raise ValueError("Normalizer manifest digest does not match the trusted partition.")
+            if record_set_digest(training_records) != trusted_partition.identity.train_record_digest:
+                raise ValueError("Normalizer records do not match the trusted training partition.")
+            if {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in training_records
+            } != {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in trusted_partition.train_records
+            }:
+                raise ValueError("Normalizer records do not belong to the trusted training partition.")
+        else:
+            manifest_digest = ""
         self.provenance = None
         values: dict[str, list[float]] = {name: [] for name in CONTINUOUS_FEATURE_NAMES}
 
@@ -113,6 +136,10 @@ class FeatureNormalizer:
                 "observed_counts": self.observed_counts,
                 "is_fitted": self.is_fitted,
             }),
+            training_partition_digest=(
+                trusted_partition.digest if trusted_partition is not None else ""
+            ),
+            status="verified" if trusted_partition is not None else "legacy_unverified",
         )
         return self
 
@@ -165,6 +192,7 @@ class FeatureNormalizer:
                 feature_channels=tuple(provenance_data.get("feature_channels", ())),
                 source_manifest_digest=provenance_data.get("source_manifest_digest", ""),
                 parameter_digest=provenance_data.get("parameter_digest", ""),
+                training_partition_digest=provenance_data.get("training_partition_digest", ""),
                 status=provenance_data.get("status", "legacy_unverified"),
             )
         return cls(
