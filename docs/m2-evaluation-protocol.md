@@ -170,6 +170,16 @@ All experimental documentation in M2 must adhere to strict integrity guidelines:
 
 ## 8. Requirements, Decisions, Assumptions, and Deferred Items
 
+### Selection freeze and held-out access
+Final held-out evaluation requires a selection-freeze record bound to the exact
+candidate descriptor, selected checkpoint, model configuration, evaluation identity,
+trusted partition identity, protocol version, code SHA, and authorization evidence
+reference. The comparison API mechanically checks these identities and rejects
+mismatches. This record is an audit control and consistency record; it is not
+cryptographic proof that a person never inspected held-out data or proof of human
+governance. Authorization and data-governance decisions remain external human
+responsibilities.
+
 ### Requirements
 * All evaluations must report Accuracy, Macro Precision, Macro Recall, Macro F1, and the $3 \times 3$ Confusion Matrix.
 * Macro F1 is the primary model selection metric due to class imbalance.

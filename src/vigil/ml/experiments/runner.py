@@ -150,9 +150,46 @@ class DevelopmentExperiment:
     metrics: dict[str, Any]
     artifact_sha256: str
     is_synthetic: bool | None
+    schema_version: int = 1
+    model_type: str = "gru"
+    normalizer_provenance: dict[str, Any] | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> DevelopmentExperiment:
+        """Restore current or legacy experiment metadata without inventing fields."""
+        if not isinstance(payload, dict):
+            raise TypeError("Experiment metadata must be a dictionary.")
+        manifest = payload.get("manifest", {})
+        split = payload.get("split", {})
+        synthetic = payload.get("is_synthetic")
+        if synthetic == "unknown":
+            synthetic = None
+        return cls(
+            git_sha=payload.get("git_sha", ""),
+            manifest_name=manifest.get("dataset_name", ""),
+            manifest_version=manifest.get("dataset_version", ""),
+            seed=int(payload.get("seed", 0)),
+            train_subjects=list(split.get("train_subjects", [])),
+            val_subjects=list(split.get("val_subjects", [])),
+            train_sessions=list(split.get("train_sessions", [])),
+            val_sessions=list(split.get("val_sessions", [])),
+            model_config=dict(payload.get("model_config", {})),
+            optimizer=payload.get("optimizer", ""),
+            learning_rate=float(payload.get("learning_rate", 0.0)),
+            weight_decay=float(payload.get("weight_decay", 0.0)),
+            epoch_count=int(payload.get("epoch_count", 0)),
+            best_checkpoint_epoch=int(payload.get("best_checkpoint_epoch", 0)),
+            metrics=dict(payload.get("metrics", {})),
+            artifact_sha256=payload.get("artifact_sha256", ""),
+            is_synthetic=synthetic,
+            schema_version=int(payload.get("schema_version", 0)),
+            model_type=payload.get("model_type", "gru"),
+            normalizer_provenance=payload.get("normalizer_provenance"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "git_sha": self.git_sha,
             "manifest": {
                 "dataset_name": self.manifest_name,
@@ -174,6 +211,8 @@ class DevelopmentExperiment:
             "metrics": self.metrics,
             "artifact_sha256": self.artifact_sha256,
             "is_synthetic": self.is_synthetic if self.is_synthetic is not None else "unknown",
+            "model_type": self.model_type,
+            "normalizer_provenance": self.normalizer_provenance,
         }
 
     def to_json(self) -> str:
@@ -187,6 +226,7 @@ def run_development_experiment(
     artifact_dir: str,
     git_sha: str,
     config: TrainingConfig | None = None,
+    model_type: str = "gru",
     is_synthetic: bool | None = None,
 ) -> tuple[TrainingResult, DevelopmentExperiment]:
     """Load manifest-approved partitions, train, and record reproducibility metadata."""
@@ -241,6 +281,7 @@ def run_development_experiment(
         val_records,
         split_result,
         effective_config,
+        model_type=model_type,
     )
     checkpoint_path = training_result.checkpoint_path
     if checkpoint_path is None:
@@ -255,9 +296,11 @@ def run_development_experiment(
         train_sessions=list(training_result.split_result.train_sessions),
         val_sessions=list(training_result.split_result.val_sessions),
         model_config={
-            "name": "GRU",
-            "input_dim": 8,
-            "hidden_dim": effective_config.hidden_dim,
+            "name": type(training_result.model).__name__,
+            **{
+                key: value
+                for key, value in vars(training_result.model.config).items()
+            },
         },
         optimizer="Adam",
         learning_rate=effective_config.learning_rate,
@@ -267,5 +310,11 @@ def run_development_experiment(
         metrics=training_result.evaluation_report.to_dict(),
         artifact_sha256=_digest_file(checkpoint_path),
         is_synthetic=is_synthetic,
+        model_type=model_type,
+        normalizer_provenance=(
+            training_result.normalizer.provenance.to_dict()
+            if training_result.normalizer.provenance is not None
+            else None
+        ),
     )
     return training_result, experiment
