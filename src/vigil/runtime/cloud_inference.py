@@ -1,6 +1,7 @@
 """Bounded HTTPS transport and temporal buffering of derived features only."""
 
 from collections import deque
+import os
 from time import perf_counter, sleep
 from urllib.parse import urlsplit
 
@@ -21,7 +22,7 @@ from vigil.runtime.inference import ModelInferenceError
 class CloudTransport:
     """Use TLS verification, finite timeouts, and at most two retries."""
 
-    def __init__(self, endpoint, *, timeout=3.0, retries=1, client=None):
+    def __init__(self, endpoint, *, timeout=3.0, retries=1, client=None, api_token=None):
         parts = urlsplit(endpoint)
         if (
             parts.scheme != "https"
@@ -38,6 +39,15 @@ class CloudTransport:
             raise ValueError("cloud timeout must be within (0, 30] seconds")
         if type(retries) is not int or not 0 <= retries <= 2:
             raise ValueError("cloud retries must be 0, 1 or 2")
+        token = api_token if api_token is not None else os.environ.get("VIGIL_API_TOKEN", "")
+        if (
+            not isinstance(token, str)
+            or len(token) < 32
+            or not token.isascii()
+            or any(not 33 <= ord(character) <= 126 for character in token)
+        ):
+            raise ValueError("cloud inference requires a valid VIGIL_API_TOKEN")
+        self._authorization = "Bearer " + token
         self.endpoint = endpoint.rstrip("/")
         self.retries = retries
         self.client = client or httpx.Client(timeout=timeout, follow_redirects=False)
@@ -49,7 +59,8 @@ class CloudTransport:
         for attempt in range(self.retries + 1):
             try:
                 response = self.client.request(
-                    method, self.endpoint + path, timeout=self.timeout, **kwargs
+                    method, self.endpoint + path, timeout=self.timeout,
+                    headers={"Authorization": self._authorization}, **kwargs
                 )
                 response.raise_for_status()
                 if len(response.content) > 65536:

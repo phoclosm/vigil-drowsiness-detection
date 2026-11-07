@@ -3,10 +3,13 @@
 import json
 import logging
 import os
+from hmac import compare_digest
 from contextlib import asynccontextmanager
+from threading import Lock
+from time import monotonic
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -18,8 +21,25 @@ from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS
 logger = logging.getLogger("vigil.cloud")
 
 
-def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
+def create_app(bundle_path=None, *, predictor_factory=BundlePredictor, api_token=None):
     """Load a trusted local bundle during startup; expose readiness honestly."""
+
+    token = api_token if api_token is not None else os.environ.get("VIGIL_API_TOKEN", "")
+    token_ready = (
+        isinstance(token, str)
+        and len(token) >= 32
+        and token.isascii()
+        and all(33 <= ord(character) <= 126 for character in token)
+    )
+    try:
+        rate_limit = int(os.environ.get("VIGIL_RATE_LIMIT_PER_MINUTE", "60"))
+        if not 1 <= rate_limit <= 600:
+            raise ValueError
+    except ValueError:
+        rate_limit = 0
+    rate_lock = Lock()
+    rate_start = monotonic()
+    rate_count = 0
 
     @asynccontextmanager
     async def lifespan(app):
@@ -74,9 +94,27 @@ def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
 
     def predictor():
         value = app.state.predictor
-        if value is None:
+        if value is None or not token_ready or rate_limit == 0:
             raise HTTPException(503, "model unavailable")
         return value
+
+    def authenticate(request: Request):
+        if not token_ready or rate_limit == 0:
+            raise HTTPException(503, "service unavailable")
+        authorization = request.headers.get("Authorization", "")
+        supplied = authorization[7:] if authorization.startswith("Bearer ") else ""
+        if not supplied or not compare_digest(supplied, token):
+            raise HTTPException(401, "authentication required")
+
+    def limit_inference():
+        nonlocal rate_start, rate_count
+        with rate_lock:
+            now = monotonic()
+            if now - rate_start >= 60:
+                rate_start, rate_count = now, 0
+            if rate_count >= rate_limit:
+                raise HTTPException(429, "rate limit exceeded", headers={"Retry-After": "60"})
+            rate_count += 1
 
     @app.get("/health")
     def health():
@@ -84,7 +122,7 @@ def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
         return {"status": "ready", "bundle_id": value.bundle_id}
 
     @app.get("/model-info")
-    def model_info():
+    def model_info(_auth=Depends(authenticate)):
         value = predictor()
         return {
             "bundle_id": value.bundle_id,
@@ -97,7 +135,8 @@ def create_app(bundle_path=None, *, predictor_factory=BundlePredictor):
         }
 
     @app.post("/predict", response_model=PredictResponse)
-    def predict(payload: PredictRequest):
+    def predict(payload: PredictRequest, _auth=Depends(authenticate)):
+        limit_inference()
         value = predictor()
         if payload.bundle_id != value.bundle_id:
             raise HTTPException(409, "bundle identifier mismatch")

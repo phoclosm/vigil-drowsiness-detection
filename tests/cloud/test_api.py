@@ -10,11 +10,13 @@ from vigil.cloud.bundle import BundlePredictor
 from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS
 from vigil.ml.dataset.windowing import build_sample_feature_vector
 from vigil.ml.inference import TemporalInferenceEngine
+API_TOKEN = "vigil-test-token-0123456789abcdef0123456789"
 
 
 @pytest.fixture
 def client(bundle_path):
-    with TestClient(create_app(bundle_path)) as client:
+    with TestClient(create_app(bundle_path, api_token=API_TOKEN)) as client:
+        client.headers.update({"Authorization": f"Bearer {API_TOKEN}"})
         yield client
 
 
@@ -80,9 +82,36 @@ def test_invalid_json_nonfinite_and_size(client, payload):
 
 
 def test_missing_bundle_is_not_ready(tmp_path):
-    with TestClient(create_app(tmp_path / "secret.pt")) as client:
+    with TestClient(create_app(tmp_path / "secret.pt", api_token=API_TOKEN)) as client:
         assert client.get("/health").status_code == 503
         assert "secret.pt" not in client.get("/health").text
+
+
+def test_authentication_and_rate_limit(bundle_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_RATE_LIMIT_PER_MINUTE", "1")
+    with TestClient(create_app(bundle_path, api_token=API_TOKEN)) as api:
+        digest = api.get("/health").json()["bundle_id"]
+        payload = {
+            "feature_channels": list(LOCKED_FEATURE_CHANNELS),
+            "features": [[0.3, 0, 0, 0.1, 1, 1, 1, 1]] * 60,
+            "bundle_id": digest,
+        }
+        assert api.get("/model-info").status_code == 401
+        assert api.post("/predict", json=payload).status_code == 401
+        assert api.post("/predict", json=payload, headers={"Authorization": "Bearer wrong"}).status_code == 401
+        headers = {"Authorization": f"Bearer {API_TOKEN}"}
+        assert api.get("/model-info", headers=headers).status_code == 200
+        assert api.post("/predict", json=payload, headers=headers).status_code == 200
+        throttled = api.post("/predict", json=payload, headers=headers)
+        assert throttled.status_code == 429
+        assert throttled.headers["Retry-After"] == "60"
+
+
+def test_missing_token_fails_closed(bundle_path, monkeypatch):
+    monkeypatch.delenv("VIGIL_API_TOKEN", raising=False)
+    with TestClient(create_app(bundle_path)) as api:
+        assert api.get("/health").status_code == 503
+        assert api.get("/model-info").status_code == 503
 
 
 def test_failure_and_changed_bundle(client, payload):

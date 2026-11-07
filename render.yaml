@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: vigil-inference
+    runtime: docker
+    plan: 1c-2g
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: VIGIL_RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: VIGIL_API_TOKEN
+        sync: false
+      - key: VIGIL_BUNDLE_S3_URI
+        sync: false
+      - key: VIGIL_BUNDLE_SHA256
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false

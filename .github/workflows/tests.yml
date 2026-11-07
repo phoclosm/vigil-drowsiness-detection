@@ -52,12 +52,16 @@ jobs:
         run: |
           mkdir -p artifacts
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/artifacts:/fixtures" -v "$PWD/scripts:/scripts:ro" vigil-cloud:ci python /scripts/cloud_smoke.py --create-fixture /fixtures/untrained.pt
-          docker run -d --name vigil-cloud-ci -p 8080:8080 -v "$PWD/artifacts:/models:ro" -e VIGIL_BUNDLE_PATH=/models/untrained.pt vigil-cloud:ci
+          echo "VIGIL_BUNDLE_SHA256=$(sha256sum artifacts/untrained.pt | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo 'VIGIL_API_TOKEN=vigil-ci-infrastructure-token-0123456789abcdef' >> "$GITHUB_ENV"
+      - name: Authenticated container smoke
+        run: |
+          docker run -d --name vigil-cloud-ci -p 8080:8080 -v "$PWD/artifacts:/models:ro" -e VIGIL_BUNDLE_PATH=/models/untrained.pt -e VIGIL_BUNDLE_SHA256 -e VIGIL_API_TOKEN vigil-cloud:ci
           for attempt in $(seq 1 30); do
             if curl --fail http://127.0.0.1:8080/health; then break; fi
             sleep 2
           done
           docker exec vigil-cloud-ci python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"
-          docker run --rm --network host -v "$PWD/scripts:/scripts:ro" vigil-cloud:ci python /scripts/cloud_smoke.py --url http://127.0.0.1:8080
+          docker run --rm --network host -e VIGIL_API_TOKEN -v "$PWD/scripts:/scripts:ro" vigil-cloud:ci python /scripts/cloud_smoke.py --url http://127.0.0.1:8080
       - if: always()
         run: docker rm -f vigil-cloud-ci || true

@@ -12,9 +12,20 @@ from vigil.cloud.assets import resolve_bundle
 
 def test_local_bundle_precedes_s3(monkeypatch, tmp_path):
     local = tmp_path / "approved.pt"
+    local.write_bytes(b"integrity fixture")
     monkeypatch.setenv("VIGIL_BUNDLE_PATH", str(local))
+    monkeypatch.setenv("VIGIL_BUNDLE_SHA256", hashlib.sha256(local.read_bytes()).hexdigest())
     monkeypatch.setenv("VIGIL_BUNDLE_S3_URI", "invalid")
     assert resolve_bundle() == local
+
+
+def test_local_bundle_rejects_wrong_digest(monkeypatch, tmp_path):
+    local = tmp_path / "approved.pt"
+    local.write_bytes(b"integrity fixture")
+    monkeypatch.setenv("VIGIL_BUNDLE_PATH", str(local))
+    monkeypatch.setenv("VIGIL_BUNDLE_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="digest mismatch"):
+        resolve_bundle()
 
 
 def test_s3_requires_digest_before_network(monkeypatch):

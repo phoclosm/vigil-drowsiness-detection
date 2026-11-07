@@ -8,14 +8,23 @@ from urllib.parse import urlsplit
 
 def resolve_bundle():
     """Require a digest for downloaded artifacts; use instance IAM credentials."""
-    local = os.environ.get("VIGIL_BUNDLE_PATH")
-    if local:
-        return Path(local)
-    uri = os.environ.get("VIGIL_BUNDLE_S3_URI", "")
-    parts = urlsplit(uri)
-    digest = os.environ.get("VIGIL_BUNDLE_SHA256", "")
     import re
 
+    digest = os.environ.get("VIGIL_BUNDLE_SHA256", "")
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("an approved bundle SHA-256 is required")
+    local = os.environ.get("VIGIL_BUNDLE_PATH")
+    if local:
+        path = Path(local)
+        checksum = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                checksum.update(chunk)
+        if checksum.hexdigest() != digest:
+            raise ValueError("bundle digest mismatch")
+        return path
+    uri = os.environ.get("VIGIL_BUNDLE_S3_URI", "")
+    parts = urlsplit(uri)
     if (
         parts.scheme != "s3"
         or not parts.netloc
@@ -23,7 +32,6 @@ def resolve_bundle():
         or parts.query
         or parts.fragment
         or parts.username
-        or not re.fullmatch(r"[a-f0-9]{64}", digest)
     ):
         raise ValueError("a local bundle or S3 object with SHA-256 is required")
     import boto3

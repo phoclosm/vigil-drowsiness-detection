@@ -1,4 +1,4 @@
-# Feature-only inference and AWS deployment
+# Feature-only inference and deployment
 
 The service receives **only 60 raw derived feature rows with eight channels**,
 their exact channel names, and a bundle SHA-256 identifier. It accepts no images,
@@ -12,29 +12,40 @@ Install a server without OpenCV, MediaPipe or GUI dependencies:
 ```powershell
 python -m pip install -e ".[cloud,ml,dev]"
 $env:VIGIL_BUNDLE_PATH = 'C:/outside-repo/approved-bundle.pt'
+$env:VIGIL_BUNDLE_SHA256 = '<approved-64-character-sha256>'
+$env:VIGIL_API_TOKEN = '<random-secret-of-at-least-32-characters>'
 $env:PORT = '8080'
 python -m vigil.cloud
 ```
 
-`GET /health` returns readiness and bundle digest; missing/invalid bundles return
+`GET /health` returns readiness and bundle digest; missing/invalid bundles or
+missing authentication configuration return
 503. `GET /model-info` exposes only digest, feature order, window/stride and
-encoding. `POST /predict` validates 60×8 raw finite values, binary masks, channel
+encoding to authenticated callers. `POST /predict` validates 60×8 raw finite values, binary masks, channel
 order and digest. It returns canonical state, class ID, confidence, probability
 mapping, server preprocessing/inference latency in ms and digest. Invalid JSON
 or schema is 422, a changed bundle is 409, oversized bodies are 413 and inference
 failure is 503. Errors never echo request bodies, paths or exceptions. Logs
 contain generated request IDs and response status only. The server is stateless
-between requests; continuity/warm-up/stride are enforced on the edge.
+between predictions; continuity/warm-up/stride are enforced on the edge.
+`/model-info` and `/predict` require `Authorization: Bearer <VIGIL_API_TOKEN>`;
+invalid/missing credentials get 401. A single worker limits authenticated
+prediction requests to 60 per minute by default (configurable 1–600 via
+`VIGIL_RATE_LIMIT_PER_MINUTE`); excess requests get 429. This is a per-process
+limit, so use one worker or enforce a shared ingress limit when scaling out.
+Use a generated, high-entropy token and rotate it in the hosting secret manager.
 
 The client accepts an HTTPS base URL with no credentials/query, verifies TLS,
 rejects redirects, defaults to a 3-second per-attempt timeout and one retry
 (configurable 0–2 retries with 0.1/0.2-second backoff). It retries transport errors
 and HTTP 429/502/503/504. Contract errors do not retry. Cloud failure stops the
 demo clearly; no state or fallback is invented. Local inference is the default
-and works offline. Remote payloads contain no frame pixels.
+and works offline. Set `VIGIL_API_TOKEN` in the desktop environment before
+starting cloud mode. The client sends it only in the HTTPS Authorization header;
+remote payloads contain no frame pixels.
 
 ```powershell
-python -m vigil --webcam 0 --inference-mode cloud --cloud-endpoint https://YOUR-SERVICE.awsapprunner.com --cloud-timeout 3 --cloud-retries 1 --landmark-model artifacts/vision/face_landmarker.task --session-id local-session --closure-threshold-ear APPROVED_EAR --perclos-window-frames APPROVED_WINDOW
+python -m vigil --webcam 0 --inference-mode cloud --cloud-endpoint https://YOUR-SERVICE.onrender.com --cloud-timeout 3 --cloud-retries 1 --landmark-model artifacts/vision/face_landmarker.task --session-id local-session --closure-threshold-ear APPROVED_EAR --perclos-window-frames APPROVED_WINDOW
 ```
 
 Use bundle-approved EAR/blink/PERCLOS settings. Obtain those settings and model
@@ -50,7 +61,7 @@ uses `/health`; App Runner must configure its own HTTP healthcheck on that path.
 
 ```powershell
 docker build -t vigil-cloud:local .
-docker run --rm -p 8080:8080 --mount type=bind,source=C:/outside-repo/approved-bundle.pt,target=/models/bundle.pt,readonly -e VIGIL_BUNDLE_PATH=/models/bundle.pt vigil-cloud:local
+docker run --rm -p 8080:8080 --mount type=bind,source=C:/outside-repo/approved-bundle.pt,target=/models/bundle.pt,readonly -e VIGIL_BUNDLE_PATH=/models/bundle.pt -e VIGIL_BUNDLE_SHA256 -e VIGIL_API_TOKEN vigil-cloud:local
 ```
 
 In a second terminal:
@@ -63,6 +74,53 @@ For infrastructure testing only, create an ignored **untrained** bundle with
 `python scripts/cloud_smoke.py --create-fixture artifacts/untrained-infrastructure.pt`.
 Never use that fixture as trained-demo evidence. The smoke sends a synthetic
 feature payload and checks response structure, not accuracy.
+
+## Render paid Docker service (default deployment target)
+
+The proposed [Render Blueprint configuration](../render.yaml) specifies one
+paid 1 CPU/2 GB Docker web service, `/health` readiness, manual deploys, a
+single process, and secret placeholders. Render provides HTTPS for the web
+service. Creating the service is billable and requires operator authorization.
+Use a restricted demo token; a public URL alone is not access control.
+
+1. Obtain an M2-approved GRU bundle, its exact SHA-256, preprocessing settings,
+   class mapping, and evaluation report. Upload the bundle to an immutable key
+   in a private S3 bucket outside Git and Docker. Give the Render service a
+   narrowly scoped `s3:GetObject` credential for that key; add KMS decrypt
+   permission only if the object uses a customer-managed KMS key.
+2. Connect this repository to Render and review `render.yaml` before creating
+   the paid service. Supply all `sync: false` values in the Render Dashboard.
+   Generate `VIGIL_API_TOKEN` with at least 32 random printable ASCII characters.
+   Never paste tokens or AWS keys into a PR or terminal log. Set the S3 URI,
+   digest, and AWS region; leave `VIGIL_BUNDLE_PATH` unset.
+3. Deploy the reviewed branch manually. Confirm `/health` returns 200 with the
+   expected digest. Run `python scripts/cloud_smoke.py --url https://<service>`
+   with the token set locally. The smoke checks unauthenticated denial,
+   authenticated model metadata and prediction schema. Its synthetic payload
+   provides no model-quality evidence.
+4. Restart the service from the Render Dashboard; repeat health and smoke
+   checks. For rollback, redeploy the previous known-good image/commit and
+   restore its matching immutable model object, digest and token settings.
+   Verify health and prediction again. Record commit, bundle digest, timestamps,
+   service URL, and results without logging credentials.
+
+Keep automatic deployments off while the model and runtime are reviewed.
+Render secret files are limited to 1 MB, so the model uses private object
+storage rather than a secret file. The service must be treated as pending until
+an authorized operator performs and verifies these steps.
+
+## M2 model handoff contract
+
+M2 supplies an approved GRU `.pt` bundle outside Git, its 64-character lowercase
+SHA-256, class mapping, fitted normalizer, training/evaluation provenance, and
+the exact EAR closure threshold, minimum blink duration, and PERCLOS window
+size used to derive training features. The runtime sends 60 raw rows in
+`LOCKED_FEATURE_CHANNELS` order with binary validity masks and stride 15 under
+`raw_with_masks_v1`; the server normalizes once and returns `ACTIVE`, `DROWSY`,
+or `SLEEPING` with confidence and all three probabilities. The bundle loader
+rejects a different channel order; the HTTP client rejects a changed digest.
+M2 should confirm that its recorded feature semantics and live extraction
+settings match this contract before a trained-model demonstration.
 
 ## AWS ECR and App Runner
 
@@ -107,7 +165,11 @@ Invoke-RestMethod "https://$serviceHost/health"
 python scripts/cloud_smoke.py --url "https://$serviceHost"
 ```
 
-Upload the approved bundle to that private S3 object outside Git before service
+The AWS example omits the required API token and therefore deliberately cannot
+become healthy as written. Before deploying it, supply `VIGIL_API_TOKEN` through
+an App Runner Secrets Manager reference and grant only the runtime role permission
+to read that secret; do not put the token in CLI JSON or shell history.
+Upload the approved bundle to the private S3 object outside Git before service
 creation. SSE-KMS objects also require narrowly scoped decrypt permission. IAM
 propagation can take time. Wait for `RUNNING` and verify both endpoints.
 App Runner does not mount local files; use S3 environment configuration there.
@@ -115,8 +177,9 @@ App Runner does not mount local files; use S3 environment configuration there.
 `PORT` must match the service image configuration. Never pass AWS keys in the
 Docker build or commit CLI files.
 
-The prototype endpoint has no application authentication/rate limiting. Use a
-restricted App Runner ingress/VPC configuration or add reviewed access controls
-before exposing it beyond an approved demo. No production availability or driver
-safety assurance is claimed. AWS deployment remains pending when credentials or
-an approved bundle are unavailable; local Docker success does not prove AWS health.
+The API uses a shared bearer token and process-local inference limit. An
+internet-facing deployment needs narrowly distributed credentials, rotation,
+and ingress limits if scaled beyond one worker. No production availability or
+driver-safety assurance is claimed. AWS deployment remains pending when
+credentials or an approved bundle are unavailable; local Docker success does
+not prove AWS health.

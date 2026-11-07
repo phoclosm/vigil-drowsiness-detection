@@ -5,7 +5,9 @@ Never use this fixture as an approved live demo bundle or quality evidence.
 
 import argparse
 import json
+import os
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -34,15 +36,32 @@ def check(url):
 
     with urlopen(url.rstrip("/") + "/health", timeout=10) as response:
         health = json.load(response)
+    unauthenticated = Request(url.rstrip("/") + "/model-info")
+    try:
+        urlopen(unauthenticated, timeout=10)
+    except HTTPError as error:
+        if error.code != 401:
+            raise
+    else:
+        raise AssertionError("model metadata was accessible without authentication")
     payload = {
         "bundle_id": health["bundle_id"],
         "feature_channels": list(LOCKED_FEATURE_CHANNELS),
         "features": [[0.3, 0.0, 0.0, 0.1, 1.0, 1.0, 1.0, 1.0]] * 60,
     }
+    token = os.environ.get("VIGIL_API_TOKEN", "")
+    if len(token) < 32:
+        raise ValueError("VIGIL_API_TOKEN must be configured for smoke testing")
+    info = Request(
+        url.rstrip("/") + "/model-info",
+        headers={"Authorization": "Bearer " + token},
+    )
+    with urlopen(info, timeout=10) as response:
+        assert json.load(response)["bundle_id"] == health["bundle_id"]
     request = Request(
         url.rstrip("/") + "/predict",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
     )
     with urlopen(request, timeout=10) as response:
         PredictResponse.model_validate(json.load(response))

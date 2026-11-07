@@ -11,12 +11,14 @@ from vigil.cloud.app import create_app
 from vigil.ml.inference import TemporalInferenceEngine
 from vigil.runtime.cloud_inference import CloudInferenceEngine, CloudTransport
 from vigil.runtime.inference import ModelInferenceError
+API_TOKEN = "vigil-test-token-0123456789abcdef0123456789"
 
 
 def make_transport(handler, **kwargs):
     return CloudTransport(
         "https://vigil.example",
         client=httpx.Client(transport=httpx.MockTransport(handler)),
+        api_token=API_TOKEN,
         **kwargs,
     )
 
@@ -32,7 +34,7 @@ def make_transport(handler, **kwargs):
 )
 def test_transport_requires_clean_https(url):
     with pytest.raises(ValueError):
-        CloudTransport(url)
+        CloudTransport(url, api_token=API_TOKEN)
 
 
 def test_transport_retries_are_bounded():
@@ -51,15 +53,17 @@ def test_transport_retries_are_bounded():
 
 def test_client_and_server_match_local_warmup_stride_gaps(bundle_path, live_frames):
     requests = []
-    with TestClient(create_app(bundle_path)) as api:
+    with TestClient(create_app(bundle_path, api_token=API_TOKEN)) as api:
 
         def handler(request):
+            assert request.headers["Authorization"] == f"Bearer {API_TOKEN}"
+            headers = {"Authorization": f"Bearer {API_TOKEN}"}
             if request.method == "GET":
-                return httpx.Response(200, json=api.get("/model-info").json())
+                return httpx.Response(200, json=api.get("/model-info", headers=headers).json())
             payload = json.loads(request.content)
             requests.append(payload)
             assert set(payload) == {"feature_channels", "features", "bundle_id"}
-            response = api.post("/predict", json=payload)
+            response = api.post("/predict", json=payload, headers=headers)
             return httpx.Response(response.status_code, json=response.json())
 
         transport = make_transport(handler).connect()
@@ -128,3 +132,9 @@ def test_all_missing_window_is_not_sent(live_frames):
             )
         )
     assert result.status == "STATUS_INVALID_INPUT"
+
+
+def test_cloud_client_requires_token(monkeypatch):
+    monkeypatch.delenv("VIGIL_API_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="VIGIL_API_TOKEN"):
+        CloudTransport("https://vigil.example")

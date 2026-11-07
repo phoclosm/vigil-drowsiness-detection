@@ -122,13 +122,12 @@ flowchart LR
     features --> local[Local bundle inference]
     features --> window[60 by 8 derived feature window]
     window --> https[HTTPS client]
-    https --> api[App Runner FastAPI]
+    https --> api[Hosted FastAPI]
     s3[Private S3 approved bundle] --> api
     api --> state[State probabilities confidence]
     local --> overlay[Local overlay]
     state --> overlay
-    image[CPU Docker image] --> ecr[ECR]
-    ecr --> api
+    image[CPU Docker image] --> api
 ```
 
 Raw frames never enter the HTTP payload. Cloud requests contain raw derived
@@ -139,5 +138,6 @@ stop cloud mode without inventing a fatigue state. Local mode stays independent
 of AWS. The existing GRU loader is the inference adapter boundary; other model
 candidates need an approved generic bundle interface before deployment.
 
-The API/client/container paths are implemented. The diagram's AWS service is a
-deployment target; no live AWS endpoint has been verified in this environment.
+The API/client/container paths are implemented. Render is the proposed default
+host; AWS remains an eligible alternative. No live endpoint has been verified
+in this environment.
