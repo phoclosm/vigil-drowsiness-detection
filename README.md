@@ -10,16 +10,18 @@ substitute for attentive driving or certified vehicle safety equipment.
 ## Current capabilities
 
 - OpenCV webcam and local-video capture with monotonic frame timing
-- MediaPipe face and eye landmark detection
+- OpenCV 5 and MediaPipe Tasks face and eye landmark detection
 - Eye Aspect Ratio, blink, and trailing PERCLOS features
 - A classical rule-based baseline for offline comparison
-- PyTorch temporal dataset, GRU classifier, training, evaluation, and export
+- PyTorch temporal dataset and GRU/LSTM/TCN training candidates; stable GRU bundle export
 - Bundle-backed real-time temporal inference
 - Live `ACTIVE`, `DROWSY`, or `SLEEPING` overlay with model confidence
 - Deterministic tests separated from hardware-dependent demo and benchmarks
+- Feature-only FastAPI inference service, HTTPS client mode and CPU Docker image
 
 The repository does not include a trained model, dataset, recording, or
-published accuracy/FPS result.
+published model-quality result. A measured webcam vision benchmark is documented
+in [the evidence record](docs/demo-and-performance.md).
 
 ## Requirements
 
@@ -40,11 +42,12 @@ From PowerShell:
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[desktop,dev,ml]"
+python -m pip install -e ".[desktop,client,dev,ml]"
 ```
 
 See [OpenCV environments](docs/opencv-environments.md) for the supported desktop
-pins and the isolated OpenCV 5 experiment and migration blocker.
+pins and separate legacy comparison setup. Download the task asset as described
+in [modern landmarks](docs/modern-landmarks.md); keep it outside Git.
 
 If `py` is unavailable, use a working `python` or `python3` command instead.
 
@@ -58,6 +61,7 @@ Webcam:
 ```powershell
 python -m vigil `
   --webcam 0 `
+  --landmark-model artifacts/vision/face_landmarker.task `
   --model <path-to-exported-bundle.pt> `
   --session-id <unique-session-id> `
   --closure-threshold-ear <approved-threshold> `
@@ -70,6 +74,7 @@ Local video:
 ```powershell
 python -m vigil `
   --video <path-to-local-video> `
+  --landmark-model artifacts/vision/face_landmarker.task `
   --model <path-to-exported-bundle.pt> `
   --session-id <unique-session-id> `
   --closure-threshold-ear <approved-threshold> `
@@ -93,6 +98,7 @@ Benchmarking is a separate bounded command and does not require a model:
 ```powershell
 python -m vigil.benchmark `
   --webcam 0 `
+  --landmark-model artifacts/vision/face_landmarker.task `
   --frames <positive-frame-count> `
   --closure-threshold-ear <approved-threshold> `
   --perclos-window-frames <approved-window-size>
@@ -106,14 +112,33 @@ publishing results. Test fixture timings are not hardware benchmarks.
 ```powershell
 python -m pytest
 python -m ruff check .
+python -m compileall -q src
 ```
 
 The default tests use deterministic fixtures and do not require a camera.
+Install `.[desktop,cloud,client,dev,ml]` to run the complete cloud suite as well.
+
+## Local and AWS inference
+
+Local bundle inference remains the default (`--inference-mode local`). Cloud
+mode uses `--inference-mode cloud --cloud-endpoint https://YOUR-SERVICE` in place
+of `--model`. The edge keeps the 60-frame window and sends derived features only;
+raw webcam frames stay local. Finite HTTPS timeouts and bounded retries fail
+clearly if the service is unavailable. There is no implicit fallback prediction.
+
+The FastAPI service exposes `/health`, `/model-info` and `/predict`. A CPU-only
+Docker image and private S3 bundle configuration support ECR/App Runner. See
+[cloud setup and deployment](docs/cloud-deployment.md) for local commands,
+payload semantics and the complete AWS procedure. Actual AWS deployment and an
+approved trained-bundle demo remain pending; synthetic infrastructure fixtures
+do not establish model quality. No tag or final release is published by this work.
 
 ## Documentation
 
 - [v0.1.0 changelog](CHANGELOG.md)
 - [System architecture](docs/architecture.md)
+- [Modern landmark adapter](docs/modern-landmarks.md)
+- [Cloud API and deployment](docs/cloud-deployment.md)
 - [Demo evidence and performance record](docs/demo-and-performance.md)
 - [Release checklist](docs/release-checklist.md)
 - [Vision benchmark protocol](docs/m1-vision-benchmark.md)

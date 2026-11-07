@@ -11,7 +11,7 @@ from typing import Sequence
 from vigil.runtime.capture import CaptureConfig, CaptureError, CaptureStream
 from vigil.runtime.environment import opencv_version
 from vigil.runtime.eye_features import EyeFeatureStream, EyeFeatureStreamConfig
-from vigil.runtime.landmarks import LandmarkError, MediaPipeFaceLandmarkDetector
+from vigil.runtime.landmarks import LandmarkError
 from vigil.runtime.performance import (
     BenchmarkResult,
     BenchmarkRunner,
@@ -19,6 +19,7 @@ from vigil.runtime.performance import (
     format_benchmark_result,
 )
 from vigil.runtime.preprocessing import VisionPreprocessingError, VisionPreprocessor
+from vigil.runtime.tasks_landmarks import create_detector
 
 
 def _positive_int(value: str) -> int:
@@ -59,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--video", type=Path, metavar="PATH")
     parser.add_argument("--frames", type=_positive_int, required=True)
     parser.add_argument(
+        "--landmark-backend", choices=("tasks", "legacy"), default="tasks"
+    )
+    parser.add_argument("--landmark-model", type=Path)
+    parser.add_argument(
         "--closure-threshold-ear",
         type=_ear_threshold,
         required=True,
@@ -92,11 +97,24 @@ def _run_benchmark(args: argparse.Namespace) -> BenchmarkResult:
         )
     )
     with CaptureStream(capture_config) as capture:
-        with MediaPipeFaceLandmarkDetector() as detector:
+        with create_detector(args.landmark_backend, args.landmark_model) as detector:
             preprocessor = VisionPreprocessor(detector, feature_stream)
+            args.detected_face_frames = 0
+
+            def read_frame():
+                frame = capture.read()
+                if frame is not None:
+                    args.frame_resolution = tuple(frame.image.shape[:2][::-1])
+                return frame
+
+            def process_frame(frame):
+                result = preprocessor.process(frame)
+                args.detected_face_frames += int(result.eye_features.face_detected)
+                return result.latency
+
             return BenchmarkRunner().run(
-                read_frame=capture.read,
-                process_frame=lambda frame: preprocessor.process(frame).latency,
+                read_frame=read_frame,
+                process_frame=process_frame,
                 max_frames=args.frames,
             )
 
@@ -119,6 +137,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"Source: {config.source_label}")
     print(f"OpenCV version: {opencv_version()}")
+    print(f"Landmark backend: {args.landmark_backend}")
+    print(f"Resolution (width, height): {getattr(args, 'frame_resolution', 'unknown')}")
+    print(
+        f"Frames with detected faces: {getattr(args, 'detected_face_frames', 'unknown')}"
+    )
     print(f"Requested frame limit: {args.frames}")
     print(format_benchmark_result(result))
     return 0

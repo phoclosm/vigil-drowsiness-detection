@@ -18,7 +18,7 @@ from vigil.runtime.capture import (
 from vigil.runtime.eye_features import EyeFeatureStream, EyeFeatureStreamConfig
 from vigil.runtime.environment import opencv_version
 from vigil.runtime.inference import ModelInferenceAdapter, ModelInferenceError
-from vigil.runtime.landmarks import LandmarkError, MediaPipeFaceLandmarkDetector
+from vigil.runtime.landmarks import LandmarkError
 from vigil.runtime.live_pipeline import (
     LiveInferencePipeline,
     LivePipelineError,
@@ -26,6 +26,7 @@ from vigil.runtime.live_pipeline import (
 )
 from vigil.runtime.overlay import OverlayError, PredictionOverlay
 from vigil.runtime.preprocessing import VisionPreprocessingError, VisionPreprocessor
+from vigil.runtime.tasks_landmarks import create_detector
 
 
 DEMO_WINDOW_NAME = "Vigil v0.1"
@@ -123,13 +124,10 @@ class DemoLoop:
         max_frames: int | None = None,
         window_name: str = DEMO_WINDOW_NAME,
     ) -> None:
-        if (
-            max_frames is not None
-            and (
-                isinstance(max_frames, bool)
-                or not isinstance(max_frames, int)
-                or max_frames < 1
-            )
+        if max_frames is not None and (
+            isinstance(max_frames, bool)
+            or not isinstance(max_frames, int)
+            or max_frames < 1
         ):
             raise ValueError("max_frames must be a positive integer or None")
         if not isinstance(window_name, str) or not window_name.strip():
@@ -225,8 +223,16 @@ def build_parser() -> argparse.ArgumentParser:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--webcam", type=_non_negative_int, metavar="INDEX")
     source.add_argument("--video", type=Path, metavar="PATH")
-    parser.add_argument("--model", type=Path, required=True, metavar="BUNDLE")
+    parser.add_argument("--model", type=Path, metavar="BUNDLE")
+    parser.add_argument("--inference-mode", choices=("local", "cloud"), default="local")
+    parser.add_argument("--cloud-endpoint")
+    parser.add_argument("--cloud-timeout", type=float, default=3.0)
+    parser.add_argument("--cloud-retries", type=int, default=1)
     parser.add_argument("--session-id", type=_non_empty, required=True)
+    parser.add_argument(
+        "--landmark-backend", choices=("tasks", "legacy"), default="tasks"
+    )
+    parser.add_argument("--landmark-model", type=Path)
     parser.add_argument(
         "--closure-threshold-ear",
         type=_ear_threshold,
@@ -259,10 +265,34 @@ def _capture_config(args: argparse.Namespace) -> CaptureConfig:
 
 def _run_demo(args: argparse.Namespace) -> DemoSummary:
     capture_config = _capture_config(args)
-    inference = ModelInferenceAdapter.from_bundle(
-        args.model,
-        session_id=args.session_id,
-    )
+    from contextlib import ExitStack
+
+    with ExitStack() as resources:
+        return _run_demo_session(args, capture_config, resources)
+
+
+def _run_demo_session(args, capture_config, resources):
+    if args.inference_mode == "local":
+        if args.model is None:
+            raise ValueError("local inference requires --model BUNDLE")
+        inference = ModelInferenceAdapter.from_bundle(
+            args.model,
+            session_id=args.session_id,
+        )
+    else:
+        if not args.cloud_endpoint:
+            raise ValueError("cloud inference requires --cloud-endpoint HTTPS_URL")
+        from vigil.runtime.cloud_inference import CloudInferenceEngine, CloudTransport
+
+        transport = CloudTransport(
+            args.cloud_endpoint, timeout=args.cloud_timeout, retries=args.cloud_retries
+        )
+        resources.callback(transport.close)
+        transport.connect()
+        inference = ModelInferenceAdapter(
+            CloudInferenceEngine(transport),
+            session_id=args.session_id,
+        )
     feature_stream = EyeFeatureStream(
         EyeFeatureStreamConfig(
             closure_threshold_ear=args.closure_threshold_ear,
@@ -272,7 +302,7 @@ def _run_demo(args: argparse.Namespace) -> DemoSummary:
     )
 
     with CaptureStream(capture_config) as capture:
-        with MediaPipeFaceLandmarkDetector() as detector:
+        with create_detector(args.landmark_backend, args.landmark_model) as detector:
             pipeline = LiveInferencePipeline(
                 VisionPreprocessor(detector, feature_stream),
                 inference,
@@ -309,6 +339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"Source: {capture_config.source_label}")
     print(f"OpenCV version: {opencv_version()}")
+    print(f"Inference mode: {args.inference_mode}")
     print(f"Frames processed: {summary.frames_processed}")
     print(f"Stop reason: {summary.stop_reason}")
     return 0

@@ -19,7 +19,7 @@ release, or downloadable model artifact.
 Run these commands from a clean checkout with Python 3.10 or newer:
 
 ```powershell
-python -m pip install -e ".[dev,ml]"
+python -m pip install -e ".[desktop,cloud,client,dev,ml]"
 python -m pytest
 python -m ruff check .
 python -m compileall -q src
@@ -32,6 +32,12 @@ environment. Inspect their contents before publication so that local data,
 models, recordings, caches, and instructions such as `AGENTS.md` are absent.
 
 ## Manual demo gates
+
+The modern Tasks backend and OpenCV 5 have been exercised with real webcam
+frames. The cloud image built and its health/predict smoke passed with an
+untrained infrastructure fixture. AWS deployment is pending CLI/credentials
+and an approved bundle; this does not satisfy the trained-demo gates below.
+App Runner also requires existing-customer eligibility; see deployment docs.
 
 - [ ] Obtain an approved, provenance-complete trained model bundle.
 - [ ] Confirm the live feature settings match the bundle's training settings.
