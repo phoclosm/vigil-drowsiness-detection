@@ -118,7 +118,7 @@ python -m compileall -q src
 The default tests use deterministic fixtures and do not require a camera.
 Install `.[desktop,cloud,client,dev,ml]` to run the complete cloud suite as well.
 
-## Local and AWS inference
+## Local and cloud inference
 
 Local bundle inference remains the default (`--inference-mode local`). Cloud
 mode uses `--inference-mode cloud --cloud-endpoint https://YOUR-SERVICE` in place
@@ -126,8 +126,9 @@ of `--model`. The edge keeps the 60-frame window and sends derived features only
 raw webcam frames stay local. Finite HTTPS timeouts and bounded retries fail
 clearly if the service is unavailable. There is no implicit fallback prediction.
 
-The FastAPI service exposes `/health`, `/model-info` and `/predict`. A CPU-only
-Docker image and private S3 bundle configuration support ECR/App Runner. See
+The FastAPI service exposes `/health`, authenticated `/model-info` and `/predict`. A CPU-only
+Docker image and private S3 bundle configuration support a paid Render service
+or an eligible AWS deployment. See
 [cloud setup and deployment](docs/cloud-deployment.md) for local commands,
 payload semantics and the complete AWS procedure. Actual AWS deployment and an
 approved trained-bundle demo remain pending; synthetic infrastructure fixtures
