@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vigil.ml.data.schema import SampleRecord
+from vigil.ml.provenance_types import (
+    NormalizerProvenance,
+    TrustedPartition,
+    record_set_digest,
+    sha256_digest,
+)
 
 CONTINUOUS_FEATURE_NAMES: tuple[str, ...] = ("ear_avg", "blink_duration_ms", "perclos")
 
@@ -29,8 +35,22 @@ class FeatureNormalizer:
     stds: dict[str, float] = field(default_factory=dict)
     observed_counts: dict[str, int] = field(default_factory=dict)
     is_fitted: bool = False
+    provenance: NormalizerProvenance | None = None
 
-    def fit(self, training_records: list[SampleRecord]) -> FeatureNormalizer:
+    @property
+    def provenance_status(self) -> str:
+        """Return verified lineage status without upgrading legacy bundles."""
+        if self.provenance is None:
+            return "legacy_unverified"
+        return self.provenance.status
+
+    def fit(
+        self,
+        training_records: list[SampleRecord],
+        *,
+        manifest_digest: str = "",
+        trusted_partition: TrustedPartition | None = None,
+    ) -> FeatureNormalizer:
         """Fit means and standard deviations from valid training observations only.
 
         Args:
@@ -39,6 +59,26 @@ class FeatureNormalizer:
         Returns:
             self with fitted parameters.
         """
+        if not training_records:
+            raise ValueError("Cannot fit FeatureNormalizer on an empty training partition.")
+        if trusted_partition is not None:
+            if not trusted_partition.manifest_verified:
+                raise ValueError("A trusted approved manifest is required for verified lineage.")
+            if trusted_partition.identity.manifest_digest != manifest_digest:
+                raise ValueError("Normalizer manifest digest does not match the trusted partition.")
+            if record_set_digest(training_records) != trusted_partition.identity.train_record_digest:
+                raise ValueError("Normalizer records do not match the trusted training partition.")
+            if {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in training_records
+            } != {
+                (record.sample_id, record.subject_id, record.session_id)
+                for record in trusted_partition.train_records
+            }:
+                raise ValueError("Normalizer records do not belong to the trusted training partition.")
+        else:
+            manifest_digest = ""
+        self.provenance = None
         values: dict[str, list[float]] = {name: [] for name in CONTINUOUS_FEATURE_NAMES}
 
         for r in training_records:
@@ -73,6 +113,34 @@ class FeatureNormalizer:
                 self.stds[name] = s
 
         self.is_fitted = True
+        self.provenance = NormalizerProvenance(
+            fit_partition="train",
+            fit_record_digest=record_set_digest(training_records),
+            fit_record_count=len(training_records),
+            fit_subjects=tuple(sorted({record.subject_id for record in training_records})),
+            fit_sessions=tuple(sorted({record.session_id for record in training_records})),
+            feature_channels=(
+                "ear_avg",
+                "is_eye_closed",
+                "blink_duration_ms",
+                "perclos",
+                "ear_avg_valid",
+                "is_eye_closed_valid",
+                "blink_duration_valid",
+                "perclos_valid",
+            ),
+            source_manifest_digest=manifest_digest,
+            parameter_digest=sha256_digest({
+                "means": self.means,
+                "stds": self.stds,
+                "observed_counts": self.observed_counts,
+                "is_fitted": self.is_fitted,
+            }),
+            training_partition_digest=(
+                trusted_partition.digest if trusted_partition is not None else ""
+            ),
+            status="verified" if trusted_partition is not None else "legacy_unverified",
+        )
         return self
 
     def normalize_continuous(self, name: str, value: float | None, is_valid: bool) -> float:
@@ -99,19 +167,38 @@ class FeatureNormalizer:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize fitted parameters for logging or checkpoint export."""
-        return {
+        result = {
             "means": dict(self.means),
             "stds": dict(self.stds),
             "observed_counts": dict(self.observed_counts),
             "is_fitted": self.is_fitted,
         }
+        if self.provenance is not None:
+            result["provenance"] = self.provenance.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FeatureNormalizer:
         """Restore normalizer from serialized parameter dictionary."""
+        provenance_data = data.get("provenance")
+        provenance = None
+        if isinstance(provenance_data, dict):
+            provenance = NormalizerProvenance(
+                fit_partition=provenance_data.get("fit_partition", "train"),
+                fit_record_digest=provenance_data.get("fit_record_digest", ""),
+                fit_record_count=int(provenance_data.get("fit_record_count", 0)),
+                fit_subjects=tuple(provenance_data.get("fit_subjects", [])),
+                fit_sessions=tuple(provenance_data.get("fit_sessions", [])),
+                feature_channels=tuple(provenance_data.get("feature_channels", ())),
+                source_manifest_digest=provenance_data.get("source_manifest_digest", ""),
+                parameter_digest=provenance_data.get("parameter_digest", ""),
+                training_partition_digest=provenance_data.get("training_partition_digest", ""),
+                status=provenance_data.get("status", "legacy_unverified"),
+            )
         return cls(
             means=dict(data.get("means", {})),
             stds=dict(data.get("stds", {})),
             observed_counts=dict(data.get("observed_counts", {})),
             is_fitted=bool(data.get("is_fitted", False)),
+            provenance=provenance,
         )

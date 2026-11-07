@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from vigil.ml.baseline.classifier import RuleBasedBaseline
 from vigil.ml.baseline.evaluation import (
@@ -24,6 +24,19 @@ from vigil.ml.evaluation.input_audit import (
 )
 from vigil.ml.models.export import LoadedModelBundle, load_model_bundle
 from vigil.ml.models.gru import GRUTemporalClassifier
+from vigil.ml.training.trainer import TemporalClassifier
+from vigil.ml.provenance_types import (
+    CandidateDescriptor,
+    CandidateTrainingProvenance,
+    EvaluationIdentity,
+    EvaluationPhase,
+    NormalizerProvenance,
+    SelectionFreezeRecord,
+    TrustedPartition,
+    describe_candidate,
+    label_mapping_digest,
+    sha256_digest,
+)
 from vigil.ml.provenance import (
     validate_evaluation_group_separation,
     validate_training_provenance,
@@ -147,6 +160,212 @@ class ModelComparisonReport:
             lines.extend(["", self.input_audit.to_markdown()])
 
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class CandidateEvaluationReport:
+    """Metrics and immutable provenance for one temporal candidate."""
+
+    candidate: CandidateDescriptor
+    evaluation_identity: EvaluationIdentity
+    training: CandidateTrainingProvenance
+    normalizer: NormalizerProvenance
+    checkpoint_sha256: str | None
+    code_git_sha: str
+    evaluation_phase: EvaluationPhase
+    class_support: tuple[tuple[int, int], ...]
+    window_count: int
+    metrics: BaselineEvaluationReport
+    is_synthetic: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate": self.candidate.to_dict(),
+            "evaluation_identity": self.evaluation_identity.to_dict(),
+            "training": self.training.to_dict(),
+            "normalizer": self.normalizer.to_dict(),
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "code_git_sha": self.code_git_sha,
+            "evaluation_phase": self.evaluation_phase,
+            "class_support": dict(self.class_support),
+            "window_count": self.window_count,
+            "metrics": self.metrics.to_dict(),
+            "is_synthetic": self.is_synthetic,
+        }
+
+
+@dataclass(frozen=True)
+class CandidateComparisonReport:
+    """Candidate-neutral comparison over one shared normalized window set."""
+
+    candidates: tuple[CandidateEvaluationReport, ...]
+    evaluation_identity: EvaluationIdentity
+    evaluation_phase: EvaluationPhase
+    evaluation_metadata: IndependentEvaluationMetadata
+    selection_freeze: SelectionFreezeRecord | None = None
+    baseline_matched_report: BaselineEvaluationReport | None = None
+    baseline_full_report: BaselineEvaluationReport | None = None
+    input_audit: EvaluationInputAudit | None = None
+    is_synthetic: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "evaluation_identity": self.evaluation_identity.to_dict(),
+            "evaluation_phase": self.evaluation_phase,
+            "evaluation_metadata": self.evaluation_metadata.to_dict(),
+            "selection_freeze": (
+                self.selection_freeze.to_dict() if self.selection_freeze is not None else None
+            ),
+            "baseline_matched": (
+                self.baseline_matched_report.to_dict()
+                if self.baseline_matched_report is not None
+                else None
+            ),
+            "baseline_full": (
+                self.baseline_full_report.to_dict()
+                if self.baseline_full_report is not None
+                else None
+            ),
+            "input_audit": self.input_audit.to_dict() if self.input_audit is not None else None,
+            "is_synthetic": self.is_synthetic,
+        }
+
+
+def compare_candidates(
+    models: Mapping[str, TemporalClassifier],
+    records: list[SampleRecord],
+    normalizer: FeatureNormalizer,
+    *,
+    evaluation_identity: EvaluationIdentity,
+    normalizer_provenance: NormalizerProvenance,
+    candidate_provenance: Mapping[str, CandidateTrainingProvenance],
+    trusted_partition: TrustedPartition,
+    evaluation_phase: EvaluationPhase,
+    metadata: IndependentEvaluationMetadata,
+    code_git_sha: str,
+    checkpoint_digests: Mapping[str, str | None] | None = None,
+    selection_freeze: SelectionFreezeRecord | None = None,
+    is_synthetic: bool | None = None,
+) -> CandidateComparisonReport:
+    """Compare candidates on exactly one validated normalized window set."""
+    if not HAS_TORCH or torch is None:
+        raise ImportError("PyTorch is required for candidate comparison.")
+    if not records:
+        raise ValueError("No records provided for candidate comparison.")
+    if not models:
+        raise ValueError("At least one candidate model is required.")
+    if not code_git_sha:
+        raise ValueError("code_git_sha is required for candidate comparison.")
+    if set(models) != set(candidate_provenance):
+        raise ValueError("Candidate models and provenance entries must have identical keys.")
+    if checkpoint_digests is not None and set(checkpoint_digests) != set(models):
+        raise ValueError("Checkpoint digests must have one entry per candidate.")
+    if normalizer.provenance is None or normalizer_provenance.status != "verified":
+        raise ValueError("A verified training-only normalizer provenance is required.")
+    if not trusted_partition.manifest_verified:
+        raise ValueError("Candidate comparison requires a trusted approved manifest.")
+    if evaluation_identity.label_mapping_digest != label_mapping_digest():
+        raise ValueError("Candidate comparison requires the canonical M2 label mapping.")
+    if normalizer.provenance != normalizer_provenance:
+        raise ValueError("Supplied normalizer provenance does not match the fitted normalizer.")
+    if not evaluation_identity.matches_partition(trusted_partition):
+        raise ValueError("Evaluation identity is not bound to the trusted partition.")
+    if not trusted_partition.contains_exact_records(records, evaluation_phase):
+        raise ValueError("Evaluation records do not match the trusted partition.")
+    if (
+        normalizer_provenance.training_partition_digest != trusted_partition.digest
+        or normalizer_provenance.source_manifest_digest
+        != trusted_partition.identity.manifest_digest
+    ):
+        raise ValueError("Normalizer provenance is not bound to the trusted training partition.")
+    if evaluation_phase == "final_held_out":
+        if selection_freeze is None:
+            raise ValueError("Final held-out evaluation requires a selection freeze record.")
+        selection_freeze.validate()
+        if selection_freeze.evaluation_identity_digest != evaluation_identity.digest:
+            raise ValueError("Selection freeze does not match the evaluation identity.")
+        if selection_freeze.partition_digest != trusted_partition.digest:
+            raise ValueError("Selection freeze does not match the trusted partition.")
+        if selection_freeze.code_git_sha != code_git_sha:
+            raise ValueError("Selection freeze code SHA does not match the evaluation.")
+        if selection_freeze.selection_protocol_version != evaluation_identity.protocol_version:
+            raise ValueError("Selection freeze protocol does not match the evaluation identity.")
+    elif selection_freeze is not None:
+        raise ValueError("Development validation cannot include a selection freeze record.")
+
+    windows = extract_windows(records, normalizer=normalizer)
+    if not windows:
+        raise ValueError("Evaluation records yielded 0 usable windows.")
+    dataset = FatigueWindowDataset(windows)
+    inputs = torch.stack([dataset[index][0] for index in range(len(dataset))])
+    targets = [int(dataset[index][1].item()) for index in range(len(dataset))]
+    reports: list[CandidateEvaluationReport] = []
+    for candidate_name in sorted(models):
+        model = models[candidate_name]
+        descriptor = describe_candidate(model)
+        provenance = candidate_provenance[candidate_name]
+        if descriptor.model_type != candidate_name or provenance.candidate != descriptor:
+            raise ValueError(f"Candidate provenance does not match model '{candidate_name}'.")
+        model.eval()
+        with torch.no_grad():
+            predictions = model.predict(inputs).tolist()
+        metrics = compute_metrics(
+            y_true=targets,
+            y_pred=[int(prediction) for prediction in predictions],
+            total_samples=len(targets),
+            ambiguous_count=0,
+        )
+        reports.append(
+            CandidateEvaluationReport(
+                candidate=descriptor,
+                evaluation_identity=evaluation_identity,
+                training=provenance,
+                normalizer=normalizer_provenance,
+                checkpoint_sha256=(
+                    checkpoint_digests[candidate_name]
+                    if checkpoint_digests is not None
+                    else None
+                ),
+                code_git_sha=code_git_sha,
+                evaluation_phase=evaluation_phase,
+                class_support=tuple(sorted(metrics.per_class_support.items())),
+                window_count=len(windows),
+                metrics=metrics,
+                is_synthetic=is_synthetic,
+            )
+        )
+    if selection_freeze is not None:
+        selected = next(
+            (report for report in reports
+             if report.candidate.model_type == selection_freeze.frozen_candidate_type),
+            None,
+        )
+        if selected is None:
+            raise ValueError("Selection freeze candidate is not present in the comparison.")
+        if sha256_digest(selected.candidate.to_dict()) != (
+            selection_freeze.frozen_candidate_identity_digest
+        ):
+            raise ValueError("Selection freeze candidate identity does not match the model.")
+        if selected.candidate.config_digest != selection_freeze.selected_model_config_digest:
+            raise ValueError("Selection freeze configuration does not match the candidate.")
+        if selection_freeze.frozen_candidate_identity_digest != sha256_digest(
+            selected.candidate.to_dict()
+        ):
+            raise ValueError("Selection freeze candidate identity does not match the model.")
+        if checkpoint_digests is None or (
+            checkpoint_digests.get(selection_freeze.frozen_candidate_type)
+            != selection_freeze.selected_checkpoint_sha256
+        ):
+            raise ValueError("Selection freeze checkpoint does not match the candidate artifact.")
+    return CandidateComparisonReport(
+        candidates=tuple(reports),
+        evaluation_identity=evaluation_identity,
+        evaluation_phase=evaluation_phase,
+        evaluation_metadata=metadata,
+        selection_freeze=selection_freeze,
+        is_synthetic=is_synthetic,
+    )
 
 
 def compare_models(
