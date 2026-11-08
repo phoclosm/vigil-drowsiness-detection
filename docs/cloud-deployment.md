@@ -94,9 +94,9 @@ Use a restricted demo token; a public URL alone is not access control.
    Never paste tokens or AWS keys into a PR or terminal log. Set the S3 URI,
    digest, and AWS region; leave `VIGIL_BUNDLE_PATH` unset.
 3. Deploy the reviewed branch manually. Confirm `/health` returns 200 with the
-   expected digest. Run `python scripts/cloud_smoke.py --url https://<service>`
+   expected digest. Run `python scripts/cloud_smoke.py --url https://<service> --expected-bundle-sha256 <approved-digest>`
    with the token set locally. The smoke checks unauthenticated denial,
-   authenticated model metadata and prediction schema. Its synthetic payload
+   authenticated model metadata, locked feature contract, and prediction digest. Its synthetic payload
    provides no model-quality evidence.
 4. Restart the service from the Render Dashboard; repeat health and smoke
    checks. For rollback, redeploy the previous known-good image/commit and
