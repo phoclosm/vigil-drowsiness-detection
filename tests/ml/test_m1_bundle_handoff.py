@@ -75,4 +75,3 @@ def test_export_load_and_m1_predictor_preserve_provenance_and_contract(tmp_path)
         response.probabilities[response.predicted_class]
     )
     assert response.latency_ms >= 0
-
