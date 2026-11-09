@@ -18,7 +18,7 @@ No synthetic fixture is a model release or model-quality evidence.
 | Normalizer provenance round-trip | Implemented and locally tested | New bundles preserve provenance; legacy bundles remain loadable and unverified. |
 | M1 cloud contract | Implemented and locally tested | `raw_with_masks_v1`, 60 rows, locked 8-channel order, stride 15, and single server-side normalization. |
 | M2-to-M1 integration smoke | Locally tested | Uses an explicitly untrained synthetic infrastructure fixture only. |
-| CI | Passed | Commit `a707e5475bab6f4bf9cb513a2148314058316427`; workflow run `42651435881` reported 7/7 jobs successful. Hosted CI is not equivalent to real-data or deployment approval. |
+| CI | Passed | Implementation commit `83234fad467d1dc04a95a32b88d8478a18cbda97` was validated by push workflow `42658161401` and pull-request workflow `42658174732`; each completed 7/7 jobs successfully. Hosted CI is not equivalent to real-data or deployment approval. |
 | Trained on approved real data | Not done | No approved records are available. |
 | Independently evaluated | Not done | Held-out evaluation is prohibited until all data/governance gates pass. |
 | Approved by owner | Not done | Requires external data and model-governance approval. |

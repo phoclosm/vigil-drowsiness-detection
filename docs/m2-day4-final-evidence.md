@@ -8,7 +8,7 @@
 |---|---|---|
 | Implemented | PASS | GRU bundle export/load, provenance validation, and M1 contract integration exist. |
 | Locally tested | PASS | Focused and repository test suites pass in the development environment. |
-| CI tested | PASS | Commit `a707e5475bab6f4bf9cb513a2148314058316427`; workflow run `42651435881` reported 7/7 jobs successful. |
+| CI tested | PASS | Implementation commit `83234fad467d1dc04a95a32b88d8478a18cbda97` was validated by push workflow `42658161401` and pull-request workflow `42658174732`; each completed 7/7 jobs successfully. |
 | Trained on approved real data | FAIL | No configured data root, approved manifest, or accessible approved records. |
 | Independently evaluated | BLOCKED | Cannot begin without approved data, frozen groups, and authorization. |
 | Calibrated | BLOCKED | No trained candidate exists to calibrate. |

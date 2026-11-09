@@ -53,7 +53,7 @@ App Runner also requires existing-customer eligibility; see deployment docs.
 |---|---|
 | Implemented | Yes |
 | Locally tested | Yes |
-| CI tested | Yes; commit `a707e5475bab6f4bf9cb513a2148314058316427`, workflow run `42651435881`, 7/7 jobs successful |
+| CI tested | Yes; implementation commit `83234fad467d1dc04a95a32b88d8478a18cbda97` was validated by push workflow `42658161401` and pull-request workflow `42658174732`, each with 7/7 jobs successful |
 | Trained on approved real data | No |
 | Independently evaluated | No |
 | Calibrated | No |
