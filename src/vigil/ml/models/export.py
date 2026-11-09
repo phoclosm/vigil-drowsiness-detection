@@ -34,6 +34,43 @@ CANONICAL_CLASS_LABELS: dict[int, str] = {
 }
 
 
+def _validate_release_metadata(metadata: dict[str, Any]) -> None:
+    """Validate optional release evidence without asserting approval."""
+    release = metadata.get("release_metadata")
+    if release is None:
+        return
+    if not isinstance(release, dict):
+        raise TypeError("release_metadata must be a dictionary.")
+    required = (
+        "experiment_identity",
+        "dataset_identity",
+        "model_identity",
+        "checkpoint",
+        "source_revision",
+        "is_synthetic",
+        "approval_status",
+    )
+    missing = [key for key in required if key not in release]
+    if missing:
+        raise ValueError(f"release_metadata is missing required fields: {missing}.")
+    if not isinstance(release["source_revision"], str) or not release["source_revision"].strip():
+        raise ValueError("release_metadata.source_revision must be non-empty.")
+    if not isinstance(release["is_synthetic"], bool):
+        raise TypeError("release_metadata.is_synthetic must be boolean.")
+    if release["approval_status"] not in {"unapproved", "pending", "approved"}:
+        raise ValueError("release_metadata.approval_status is invalid.")
+    for key in ("experiment_identity", "dataset_identity", "model_identity", "checkpoint"):
+        if not isinstance(release[key], dict):
+            raise TypeError(f"release_metadata.{key} must be a dictionary.")
+    if release["approval_status"] == "approved":
+        if release["is_synthetic"]:
+            raise ValueError("Synthetic bundles cannot be marked approved.")
+        if not isinstance(release.get("approval_evidence_ref"), str) or not release[
+            "approval_evidence_ref"
+        ].strip():
+            raise ValueError("Approved release metadata requires approval_evidence_ref.")
+
+
 @dataclass(frozen=True)
 class LoadedModelBundle:
     """Self-contained bundle containing a loaded model, normalizer, and metadata.
@@ -125,6 +162,7 @@ def export_model_bundle(
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     bundle_metadata = dict(metadata) if metadata is not None else {}
+    _validate_release_metadata(bundle_metadata)
     training_provenance = getattr(model, "training_provenance", None)
     if training_provenance is not None:
         bundle_metadata["training_provenance"] = validate_training_provenance(
@@ -144,12 +182,7 @@ def export_model_bundle(
             "bidirectional": model.config.bidirectional,
         },
         "state_dict": {k: v.detach().cpu().clone() for k, v in model.state_dict().items()},
-        "normalizer": {
-            "means": dict(normalizer.means),
-            "stds": dict(normalizer.stds),
-            "observed_counts": dict(normalizer.observed_counts),
-            "is_fitted": normalizer.is_fitted,
-        },
+        "normalizer": normalizer.to_dict(),
         "window_config": {
             "window_length": LOCKED_WINDOW_LENGTH,
             "stride": LOCKED_STRIDE,
@@ -294,10 +327,12 @@ def load_model_bundle(
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError(f"normalizer.observed_counts['{name}'] must be a non-negative integer.")
 
-    normalizer = FeatureNormalizer()
+    normalizer = FeatureNormalizer.from_dict(norm_dict)
     normalizer.means = {k: float(v) for k, v in norm_dict.get("means", {}).items()}
     normalizer.stds = {k: float(v) for k, v in norm_dict.get("stds", {}).items()}
-    normalizer.observed_counts = {k: int(v) for k, v in norm_dict.get("observed_counts", {}).items()}
+    normalizer.observed_counts = {
+        k: int(v) for k, v in norm_dict.get("observed_counts", {}).items()
+    }
     normalizer.is_fitted = True
 
     # Reconstruct window configuration
@@ -337,6 +372,7 @@ def load_model_bundle(
     metadata = raw_bundle.get("metadata", {})
     if not isinstance(metadata, dict):
         raise TypeError("metadata in bundle must be a dictionary.")
+    _validate_release_metadata(metadata)
     if "training_provenance" in metadata:
         metadata = dict(metadata)
         metadata["training_provenance"] = validate_training_provenance(
