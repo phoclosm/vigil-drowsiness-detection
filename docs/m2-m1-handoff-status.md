@@ -18,7 +18,7 @@ No synthetic fixture is a model release or model-quality evidence.
 | Normalizer provenance round-trip | Implemented and locally tested | New bundles preserve provenance; legacy bundles remain loadable and unverified. |
 | M1 cloud contract | Implemented and locally tested | `raw_with_masks_v1`, 60 rows, locked 8-channel order, stride 15, and single server-side normalization. |
 | M2-to-M1 integration smoke | Locally tested | Uses an explicitly untrained synthetic infrastructure fixture only. |
-| CI | To be verified on the new M2 PR | Hosted CI is not equivalent to real-data or deployment approval. |
+| CI | Passed | PR #28 head `56a7cbd509aa70671f418c9eae39f3a385e11a8c` had 14/14 passing CI checks. Hosted CI is not equivalent to real-data or deployment approval. |
 | Trained on approved real data | Not done | No approved records are available. |
 | Independently evaluated | Not done | Held-out evaluation is prohibited until all data/governance gates pass. |
 | Approved by owner | Not done | Requires external data and model-governance approval. |
@@ -29,15 +29,17 @@ No synthetic fixture is a model release or model-quality evidence.
 M1 receives the feature settings from the runtime construction sites:
 
 - EAR closure threshold: supplied by `--closure-threshold-ear`.
-- Minimum blink duration: supplied by `--minimum-blink-duration-ms`.
-- PERCLOS window: supplied by `--perclos-window-frames`.
+- Minimum blink duration: supplied by `--minimum-blink-duration-ms` (optional,
+  default `0 ms`).
+- PERCLOS window: required `--perclos-window-frames`.
 
-The current CLI/test defaults commonly use `0.20`, `75.0 ms`, and `60`
-frames, but these are provisional configuration values, not empirically
-approved GRU training settings. The exact values used to create training
-features must be recorded in the eventual private bundle metadata and must
-match M1's live configuration. No such approved training configuration exists
-yet.
+EAR threshold and PERCLOS window are required operator configuration. The
+minimum blink duration is optional and defaults to `0 ms`. Example/test values
+commonly use EAR `0.20`, blink duration `75 ms`, and PERCLOS `60` frames; these
+are not empirically approved training settings. The exact values used to create
+training features must be recorded in the eventual private bundle metadata and
+must match M1's live configuration. No such approved training configuration
+exists yet.
 
 ## M1 cloud contract
 

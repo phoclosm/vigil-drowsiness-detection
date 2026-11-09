@@ -49,6 +49,22 @@ App Runner also requires existing-customer eligibility; see deployment docs.
 
 ## Evidence and release gates
 
+| Gate | Status |
+|---|---|
+| Implemented | Yes |
+| Locally tested | Yes |
+| CI tested | Yes; PR #28 head passed 14/14 checks |
+| Trained on approved real data | No |
+| Independently evaluated | No |
+| Calibrated | No |
+| Owner approved | No |
+| Deployed by M1 | No |
+
+**BLOCKED — NO APPROVED TRAINED GRU BUNDLE.** The remaining path requires
+approved real records and governance evidence, reviewed canonical labels,
+leakage-free frozen groups, a provenance-complete trained checkpoint,
+calibration, independent evaluation authorization, and M1 deployment approval.
+
 - [ ] Attach a reviewed model card before publishing model-quality claims.
 - [ ] Add only measured performance values with revision, hardware, input,
   configuration, frame count, and measurement method.
