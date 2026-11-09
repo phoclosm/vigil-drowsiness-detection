@@ -53,7 +53,7 @@ App Runner also requires existing-customer eligibility; see deployment docs.
 |---|---|
 | Implemented | Yes |
 | Locally tested | Yes |
-| CI tested | Yes; PR #28 head passed 14/14 checks |
+| CI tested | Yes; commit `a707e5475bab6f4bf9cb513a2148314058316427`, workflow run `42651435881`, 7/7 jobs successful |
 | Trained on approved real data | No |
 | Independently evaluated | No |
 | Calibrated | No |
@@ -64,6 +64,8 @@ App Runner also requires existing-customer eligibility; see deployment docs.
 approved real records and governance evidence, reviewed canonical labels,
 leakage-free frozen groups, a provenance-complete trained checkpoint,
 calibration, independent evaluation authorization, and M1 deployment approval.
+Verified software provenance is not proof of consent, licensing, privacy
+approval, human approval, or release authorization.
 
 - [ ] Attach a reviewed model card before publishing model-quality claims.
 - [ ] Add only measured performance values with revision, hardware, input,

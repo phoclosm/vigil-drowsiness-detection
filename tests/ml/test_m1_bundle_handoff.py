@@ -202,9 +202,6 @@ def test_approved_release_requires_verified_lineage(tmp_path):
         }
     }
     model = GRUTemporalClassifier(GRUConfig(hidden_dim=4))
-    with pytest.raises(ValueError, match="model-development provenance"):
-        export_model_bundle(model, _fixture_normalizer(), tmp_path / "unverified.pt", metadata)
-
     model.training_provenance = {
         "strategy": "subject",
         "train_subjects": ["train-subject"],
@@ -212,13 +209,121 @@ def test_approved_release_requires_verified_lineage(tmp_path):
         "train_sessions": ["train"],
         "val_sessions": ["validation"],
     }
-    with pytest.raises(ValueError, match="verified normalizer provenance"):
-        export_model_bundle(model, _fixture_normalizer(), tmp_path / "unverified-normalizer.pt", metadata)
+    normalizer = _verified_normalizer()
+    metadata["release_metadata"]["normalizer_provenance"] = {
+        "status": normalizer.provenance.status,
+        "source_manifest_digest": normalizer.provenance.source_manifest_digest,
+        "training_partition_digest": normalizer.provenance.training_partition_digest,
+    }
+    with pytest.raises(ValueError, match="only a pointer"):
+        export_model_bundle(model, normalizer, tmp_path / "approved.pt", metadata)
 
-    bundle_path = tmp_path / "approved-lineage-only.pt"
-    export_model_bundle(model, _verified_normalizer(), bundle_path, metadata)
-    loaded = load_model_bundle(bundle_path)
-    assert loaded.metadata["release_metadata"]["approval_status"] == "approved"
+
+@pytest.mark.parametrize("approval_status", ["pending", "unapproved"])
+def test_pending_and_unapproved_release_metadata_remain_usable(tmp_path, approval_status):
+    metadata = {
+        "release_metadata": {
+            "experiment_identity": {"schema_version": "1", "identity_digest": "0" * 64},
+            "dataset_identity": {
+                "dataset_name": "fixture",
+                "dataset_version": "1",
+                "manifest_digest": "1" * 64,
+                "label_mapping_digest": "2" * 64,
+                "partition_digest": "3" * 64,
+            },
+            "model_identity": {"model_type": "gru", "config_digest": "4" * 64},
+            "checkpoint": {
+                "checkpoint_sha256": "5" * 64,
+                "artifact_sha256": "6" * 64,
+                "best_epoch": 1,
+            },
+            "source_revision": "a" * 40,
+            "is_synthetic": True,
+            "approval_status": approval_status,
+        }
+    }
+    bundle_path = tmp_path / f"{approval_status}.pt"
+    export_model_bundle(
+        GRUTemporalClassifier(GRUConfig(hidden_dim=4)),
+        _fixture_normalizer(),
+        bundle_path,
+        metadata,
+    )
+    assert load_model_bundle(bundle_path).metadata["release_metadata"]["approval_status"] == approval_status
+
+
+def test_load_rejects_tampered_approved_claim(tmp_path):
+    import torch
+
+    metadata = {
+        "release_metadata": {
+            "experiment_identity": {"schema_version": "1", "identity_digest": "0" * 64},
+            "dataset_identity": {
+                "dataset_name": "fixture",
+                "dataset_version": "1",
+                "manifest_digest": "1" * 64,
+                "label_mapping_digest": "2" * 64,
+                "partition_digest": "3" * 64,
+            },
+            "model_identity": {"model_type": "gru", "config_digest": "4" * 64},
+            "checkpoint": {
+                "checkpoint_sha256": "5" * 64,
+                "artifact_sha256": "6" * 64,
+                "best_epoch": 1,
+            },
+            "source_revision": "a" * 40,
+            "is_synthetic": False,
+            "approval_status": "pending",
+        }
+    }
+    bundle_path = tmp_path / "tampered-approved.pt"
+    export_model_bundle(
+        GRUTemporalClassifier(GRUConfig(hidden_dim=4)),
+        _fixture_normalizer(),
+        bundle_path,
+        metadata,
+    )
+    raw = torch.load(bundle_path, weights_only=False)
+    raw["metadata"]["release_metadata"]["approval_status"] = "approved"
+    torch.save(raw, bundle_path)
+    with pytest.raises(ValueError, match="only a pointer"):
+        load_model_bundle(bundle_path)
+
+
+def test_declared_normalizer_provenance_must_match_actual_lineage(tmp_path):
+    normalizer = _verified_normalizer()
+    metadata = {
+        "release_metadata": {
+            "experiment_identity": {"schema_version": "1", "identity_digest": "0" * 64},
+            "dataset_identity": {
+                "dataset_name": "fixture",
+                "dataset_version": "1",
+                "manifest_digest": "1" * 64,
+                "label_mapping_digest": "2" * 64,
+                "partition_digest": "3" * 64,
+            },
+            "model_identity": {"model_type": "gru", "config_digest": "4" * 64},
+            "checkpoint": {
+                "checkpoint_sha256": "5" * 64,
+                "artifact_sha256": "6" * 64,
+                "best_epoch": 1,
+            },
+            "source_revision": "a" * 40,
+            "is_synthetic": True,
+            "approval_status": "pending",
+            "normalizer_provenance": {
+                "status": "verified",
+                "source_manifest_digest": "f" * 64,
+            },
+        }
+    }
+    with pytest.raises(ValueError, match="does not match"):
+        export_model_bundle(
+            GRUTemporalClassifier(GRUConfig(hidden_dim=4)),
+            normalizer,
+            tmp_path / "mismatched-lineage.pt",
+            metadata,
+        )
 
 
 @pytest.mark.parametrize(

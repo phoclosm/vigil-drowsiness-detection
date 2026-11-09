@@ -118,27 +118,32 @@ def _validate_release_metadata(
     ) or checkpoint["best_epoch"] < 0:
         raise ValueError("checkpoint.best_epoch must be a non-negative integer.")
 
-    if release["approval_status"] == "approved":
-        if release["is_synthetic"]:
-            raise ValueError("Synthetic bundles cannot be marked approved.")
-        if not isinstance(release.get("approval_evidence_ref"), str) or not release[
-            "approval_evidence_ref"
-        ].strip():
-            raise ValueError("Approved release metadata requires approval_evidence_ref.")
-        if model is None or normalizer is None:
-            raise ValueError("Approved release metadata requires model and normalizer context.")
-        if not isinstance(getattr(model, "training_provenance", None), dict):
-            raise ValueError("Approved release metadata requires verified model-development provenance.")
-        provenance = normalizer.provenance
-        if provenance is None or provenance.status != "verified":
-            raise ValueError("Approved release metadata requires verified normalizer provenance.")
-        release_normalizer = release.get("normalizer_provenance")
+    release_normalizer = release.get("normalizer_provenance")
+    if release_normalizer is not None:
         if not isinstance(release_normalizer, dict):
-            raise ValueError("Approved release metadata requires normalizer_provenance.")
-        if release_normalizer.get("status") != "verified":
-            raise ValueError("Approved release metadata requires verified normalizer_provenance.")
-        for key in ("source_manifest_digest", "training_partition_digest"):
-            _require_sha256(release_normalizer.get(key), f"normalizer_provenance.{key}")
+            raise TypeError("release_metadata.normalizer_provenance must be a dictionary.")
+        if normalizer is None or normalizer.provenance is None:
+            raise ValueError(
+                "Declared normalizer_provenance cannot be verified without actual normalizer lineage."
+            )
+        actual_normalizer = normalizer.provenance.to_dict()
+        mismatches = {
+            key: (value, actual_normalizer.get(key))
+            for key, value in release_normalizer.items()
+            if value != actual_normalizer.get(key)
+        }
+        if mismatches:
+            raise ValueError(
+                "release_metadata.normalizer_provenance does not match the serialized "
+                f"normalizer provenance: {sorted(mismatches)}."
+            )
+
+    if release["approval_status"] == "approved":
+        raise ValueError(
+            "approval_status='approved' is rejected: approval_evidence_ref is only "
+            "a pointer and is not authenticated proof of consent, licensing, privacy "
+            "approval, human approval, or release permission."
+        )
 
 
 @dataclass(frozen=True)

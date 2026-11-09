@@ -8,7 +8,7 @@
 |---|---|---|
 | Implemented | PASS | GRU bundle export/load, provenance validation, and M1 contract integration exist. |
 | Locally tested | PASS | Focused and repository test suites pass in the development environment. |
-| CI tested | PASS | PR #28 head `56a7cbd509aa70671f418c9eae39f3a385e11a8c` passed 14/14 checks. |
+| CI tested | PASS | Commit `a707e5475bab6f4bf9cb513a2148314058316427`; workflow run `42651435881` reported 7/7 jobs successful. |
 | Trained on approved real data | FAIL | No configured data root, approved manifest, or accessible approved records. |
 | Independently evaluated | BLOCKED | Cannot begin without approved data, frozen groups, and authorization. |
 | Calibrated | BLOCKED | No trained candidate exists to calibrate. |
@@ -22,6 +22,12 @@ infrastructure fixture. It verifies the 60-row, eight-channel
 `raw_with_masks_v1` request, bundle digest, one-time normalization, finite GRU
 inference, and response schema. It is not a trained-model test, hosted
 deployment test, accuracy result, or model-quality evidence.
+
+Verified normalizer and partition provenance is software lineage evidence only.
+It does not prove consent, licensing, privacy approval, human approval, or
+release authorization. No approved real participant records or reviewed
+canonical frame-level labels are available. No real model training, calibration,
+candidate ranking, or independent held-out evaluation has occurred.
 
 ## External unblockers
 

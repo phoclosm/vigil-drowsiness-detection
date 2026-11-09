@@ -107,7 +107,7 @@ window endpoints and all eligible supplied frames.
 |---|---|
 | Implemented | Yes |
 | Locally tested | Yes |
-| CI tested | Yes; PR #28 head passed 14/14 checks |
+| CI tested | Yes; commit `a707e5475bab6f4bf9cb513a2148314058316427`, workflow run `42651435881`, 7/7 jobs successful |
 | Trained on approved real data | No |
 | Independently evaluated | No |
 | Calibrated | No |
@@ -127,12 +127,15 @@ Available evidence is limited to automated tests that verify:
 These tests establish software behavior and reproducibility of the pipeline.
 They do not establish model quality or generalization.
 
-The project remains **BLOCKED — NO APPROVED TRAINED GRU BUNDLE**. No real
-recordings, governance approvals, trained checkpoint, calibration results, or
-independent held-out metrics are available. The smallest acceptable unblocker
-is an approved manifest with accessible records and reviewed labels, followed
-by frozen grouped training, provenance-complete checkpoint selection,
-calibration, and separately authorized held-out evaluation.
+The project remains **BLOCKED — NO APPROVED TRAINED GRU BUNDLE**. No approved
+real participant records or reviewed canonical frame-level labels are
+available. No real model training, calibration, candidate ranking, or
+independent held-out evaluation has occurred. Verified provenance is software
+lineage evidence only, not proof of consent, licensing, privacy approval,
+human approval, or release authorization. The smallest acceptable unblocker is
+an approved manifest with accessible records and reviewed labels, followed by
+frozen grouped training, provenance-complete checkpoint selection, calibration,
+and separately authorized held-out evaluation.
 
 ## Limitations, Risks, and Safety
 
