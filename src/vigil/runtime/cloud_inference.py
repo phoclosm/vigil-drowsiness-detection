@@ -2,6 +2,7 @@
 
 from collections import deque
 import os
+import re
 from time import perf_counter, sleep
 from urllib.parse import urlsplit
 
@@ -22,7 +23,16 @@ from vigil.runtime.inference import ModelInferenceError
 class CloudTransport:
     """Use TLS verification, finite timeouts, and at most two retries."""
 
-    def __init__(self, endpoint, *, timeout=3.0, retries=1, client=None, api_token=None):
+    def __init__(
+        self,
+        endpoint,
+        *,
+        timeout=3.0,
+        retries=1,
+        client=None,
+        api_token=None,
+        expected_bundle_sha256=None,
+    ):
         parts = urlsplit(endpoint)
         if (
             parts.scheme != "https"
@@ -39,6 +49,10 @@ class CloudTransport:
             raise ValueError("cloud timeout must be within (0, 30] seconds")
         if type(retries) is not int or not 0 <= retries <= 2:
             raise ValueError("cloud retries must be 0, 1 or 2")
+        if expected_bundle_sha256 is not None and not re.fullmatch(
+            r"[a-f0-9]{64}", expected_bundle_sha256
+        ):
+            raise ValueError("expected cloud bundle SHA-256 must be lowercase hex")
         token = api_token if api_token is not None else os.environ.get("VIGIL_API_TOKEN", "")
         if (
             not isinstance(token, str)
@@ -53,6 +67,7 @@ class CloudTransport:
         self.client = client or httpx.Client(timeout=timeout, follow_redirects=False)
         self.timeout = timeout
         self.bundle_id = None
+        self.expected_bundle_sha256 = expected_bundle_sha256
         self.last_round_trip_ms = None
 
     def _request(self, method, path, **kwargs):
@@ -85,10 +100,13 @@ class CloudTransport:
                 or info["input_encoding"] != "raw_with_masks_v1"
             ):
                 raise ValueError("cloud feature contract mismatch")
-            import re
-
             if not re.fullmatch(r"[a-f0-9]{64}", info["bundle_id"]):
                 raise ValueError("invalid bundle identifier")
+            if (
+                self.expected_bundle_sha256 is not None
+                and info["bundle_id"] != self.expected_bundle_sha256
+            ):
+                raise ValueError("cloud bundle digest differs from approved digest")
             self.bundle_id = info["bundle_id"]
             self.window_config = WindowConfig(
                 max_frame_gap=info["max_frame_gap"],

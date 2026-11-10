@@ -121,7 +121,8 @@ Install `.[desktop,cloud,client,dev,ml]` to run the complete cloud suite as well
 ## Local and cloud inference
 
 Local bundle inference remains the default (`--inference-mode local`). Cloud
-mode uses `--inference-mode cloud --cloud-endpoint https://YOUR-SERVICE` in place
+mode uses `--inference-mode cloud --cloud-endpoint https://YOUR-SERVICE
+--cloud-bundle-sha256 <approved-digest>` in place
 of `--model`. The edge keeps the 60-frame window and sends derived features only;
 raw webcam frames stay local. Finite HTTPS timeouts and bounded retries fail
 clearly if the service is unavailable. There is no implicit fallback prediction.

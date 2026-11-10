@@ -305,3 +305,24 @@ def test_main_reports_model_failure_without_opening_hardware(
     assert exit_code == 1
     assert captured.out == ""
     assert "Demo failed: bundle missing" in captured.err
+
+
+def test_cloud_mode_requires_approved_digest_before_camera(capsys) -> None:
+    code = demo.main(
+        [
+            "--webcam",
+            "0",
+            "--inference-mode",
+            "cloud",
+            "--cloud-endpoint",
+            "https://vigil.example",
+            "--session-id",
+            "demo-session",
+            "--closure-threshold-ear",
+            "0.20",
+            "--perclos-window-frames",
+            "60",
+        ]
+    )
+    assert code == 1
+    assert "--cloud-bundle-sha256" in capsys.readouterr().err

@@ -45,9 +45,10 @@ starting cloud mode. The client sends it only in the HTTPS Authorization header;
 remote payloads contain no frame pixels.
 
 ```powershell
-python -m vigil --webcam 0 --inference-mode cloud --cloud-endpoint https://YOUR-SERVICE.onrender.com --cloud-timeout 3 --cloud-retries 1 --landmark-model artifacts/vision/face_landmarker.task --session-id local-session --closure-threshold-ear APPROVED_EAR --perclos-window-frames APPROVED_WINDOW
+python -m vigil --webcam 0 --inference-mode cloud --cloud-endpoint https://YOUR-SERVICE.onrender.com --cloud-bundle-sha256 APPROVED_64_CHARACTER_SHA256 --cloud-timeout 3 --cloud-retries 1 --landmark-model artifacts/vision/face_landmarker.task --session-id local-session --closure-threshold-ear APPROVED_EAR --perclos-window-frames APPROVED_WINDOW
 ```
 
+The desktop checks the operator-supplied approved digest before opening a camera.
 Use bundle-approved EAR/blink/PERCLOS settings. Obtain those settings and model
 quality evidence from the bundle owner. For local mode add
 `--inference-mode local --model PATH` instead of cloud flags.
