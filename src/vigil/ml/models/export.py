@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,117 @@ CANONICAL_CLASS_LABELS: dict[int, str] = {
     1: "DROWSY",
     2: "SLEEPING",
 }
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _require_non_empty_text(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string.")
+    return value
+
+
+def _require_sha256(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        raise ValueError(f"{name} must be a lowercase 64-character SHA-256 digest.")
+    return value
+
+
+def _validate_release_metadata(
+    metadata: dict[str, Any],
+    *,
+    model: GRUTemporalClassifier | None = None,
+    normalizer: FeatureNormalizer | None = None,
+) -> None:
+    """Validate optional release evidence without asserting approval."""
+    release = metadata.get("release_metadata")
+    if release is None:
+        return
+    if not isinstance(release, dict):
+        raise TypeError("release_metadata must be a dictionary.")
+    required = (
+        "experiment_identity", "dataset_identity", "model_identity", "checkpoint",
+        "source_revision", "is_synthetic", "approval_status",
+    )
+    missing = [key for key in required if key not in release]
+    if missing:
+        raise ValueError(f"release_metadata is missing required fields: {missing}.")
+    if not isinstance(release["source_revision"], str) or not _GIT_SHA_RE.fullmatch(
+        release["source_revision"]
+    ):
+        raise ValueError("release_metadata.source_revision must be a 40-character Git SHA.")
+    if not isinstance(release["is_synthetic"], bool):
+        raise TypeError("release_metadata.is_synthetic must be boolean.")
+    if release["approval_status"] not in {"unapproved", "pending", "approved"}:
+        raise ValueError("release_metadata.approval_status is invalid.")
+    for key in ("experiment_identity", "dataset_identity", "model_identity", "checkpoint"):
+        if not isinstance(release[key], dict):
+            raise TypeError(f"release_metadata.{key} must be a dictionary.")
+    experiment = release["experiment_identity"]
+    for key in ("schema_version", "identity_digest"):
+        if key not in experiment:
+            raise ValueError(f"release_metadata.experiment_identity missing '{key}'.")
+    _require_non_empty_text(experiment["schema_version"], "experiment_identity.schema_version")
+    _require_sha256(experiment["identity_digest"], "experiment_identity.identity_digest")
+
+    dataset = release["dataset_identity"]
+    for key in (
+        "dataset_name", "dataset_version", "manifest_digest",
+        "label_mapping_digest", "partition_digest",
+    ):
+        if key not in dataset:
+            raise ValueError(f"release_metadata.dataset_identity missing '{key}'.")
+    for key in ("dataset_name", "dataset_version"):
+        _require_non_empty_text(dataset[key], f"dataset_identity.{key}")
+    for key in ("manifest_digest", "label_mapping_digest", "partition_digest"):
+        _require_sha256(dataset[key], f"dataset_identity.{key}")
+
+    model_identity = release["model_identity"]
+    for key in ("model_type", "config_digest"):
+        if key not in model_identity:
+            raise ValueError(f"release_metadata.model_identity missing '{key}'.")
+    _require_non_empty_text(model_identity["model_type"], "model_identity.model_type")
+    _require_sha256(model_identity["config_digest"], "model_identity.config_digest")
+
+    checkpoint = release["checkpoint"]
+    for key in ("checkpoint_sha256", "artifact_sha256", "best_epoch"):
+        if key not in checkpoint:
+            raise ValueError(f"release_metadata.checkpoint missing '{key}'.")
+    _require_sha256(checkpoint["checkpoint_sha256"], "checkpoint.checkpoint_sha256")
+    _require_sha256(checkpoint["artifact_sha256"], "checkpoint.artifact_sha256")
+    if isinstance(checkpoint["best_epoch"], bool) or not isinstance(
+        checkpoint["best_epoch"], int
+    ) or checkpoint["best_epoch"] < 0:
+        raise ValueError("checkpoint.best_epoch must be a non-negative integer.")
+
+    release_normalizer = release.get("normalizer_provenance")
+    if release_normalizer is not None:
+        if not isinstance(release_normalizer, dict):
+            raise TypeError("release_metadata.normalizer_provenance must be a dictionary.")
+        if normalizer is None or normalizer.provenance is None:
+            raise ValueError(
+                "Declared normalizer_provenance cannot be verified without actual normalizer lineage."
+            )
+        actual_normalizer = normalizer.provenance.to_dict()
+        mismatches = {
+            key: (value, actual_normalizer.get(key))
+            for key, value in release_normalizer.items()
+            if value != actual_normalizer.get(key)
+        }
+        if mismatches:
+            raise ValueError(
+                "release_metadata.normalizer_provenance does not match the serialized "
+                f"normalizer provenance: {sorted(mismatches)}."
+            )
+
+    if release["approval_status"] == "approved":
+        raise ValueError(
+            "approval_status='approved' is rejected: approval_evidence_ref is only "
+            "a pointer and is not authenticated proof of consent, licensing, privacy "
+            "approval, human approval, or release permission."
+        )
 
 
 @dataclass(frozen=True)
@@ -130,6 +242,7 @@ def export_model_bundle(
         bundle_metadata["training_provenance"] = validate_training_provenance(
             training_provenance
         )
+    _validate_release_metadata(bundle_metadata, model=model, normalizer=normalizer)
 
     bundle_dict = {
         "bundle_version": BUNDLE_SCHEMA_VERSION,
@@ -144,12 +257,7 @@ def export_model_bundle(
             "bidirectional": model.config.bidirectional,
         },
         "state_dict": {k: v.detach().cpu().clone() for k, v in model.state_dict().items()},
-        "normalizer": {
-            "means": dict(normalizer.means),
-            "stds": dict(normalizer.stds),
-            "observed_counts": dict(normalizer.observed_counts),
-            "is_fitted": normalizer.is_fitted,
-        },
+        "normalizer": normalizer.to_dict(),
         "window_config": {
             "window_length": LOCKED_WINDOW_LENGTH,
             "stride": LOCKED_STRIDE,
@@ -294,10 +402,12 @@ def load_model_bundle(
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError(f"normalizer.observed_counts['{name}'] must be a non-negative integer.")
 
-    normalizer = FeatureNormalizer()
+    normalizer = FeatureNormalizer.from_dict(norm_dict)
     normalizer.means = {k: float(v) for k, v in norm_dict.get("means", {}).items()}
     normalizer.stds = {k: float(v) for k, v in norm_dict.get("stds", {}).items()}
-    normalizer.observed_counts = {k: int(v) for k, v in norm_dict.get("observed_counts", {}).items()}
+    normalizer.observed_counts = {
+        k: int(v) for k, v in norm_dict.get("observed_counts", {}).items()
+    }
     normalizer.is_fitted = True
 
     # Reconstruct window configuration
@@ -337,6 +447,11 @@ def load_model_bundle(
     metadata = raw_bundle.get("metadata", {})
     if not isinstance(metadata, dict):
         raise TypeError("metadata in bundle must be a dictionary.")
+    if "training_provenance" in metadata:
+        model.training_provenance = validate_training_provenance(
+            metadata["training_provenance"]
+        )
+    _validate_release_metadata(metadata, model=model, normalizer=normalizer)
     if "training_provenance" in metadata:
         metadata = dict(metadata)
         metadata["training_provenance"] = validate_training_provenance(

@@ -103,6 +103,17 @@ window endpoints and all eligible supplied frames.
 
 ## Available Evidence
 
+| Evidence state | Status |
+|---|---|
+| Implemented | Yes |
+| Locally tested | Yes |
+| CI tested | Yes; implementation commit `83234fad467d1dc04a95a32b88d8478a18cbda97` was validated by push workflow `42658161401` and pull-request workflow `42658174732`, each with 7/7 jobs successful |
+| Trained on approved real data | No |
+| Independently evaluated | No |
+| Calibrated | No |
+| Owner approved | No |
+| Deployed by M1 | No |
+
 Available evidence is limited to automated tests that verify:
 
 - Feature-channel ordering, masks, normalization behavior, finite tensors, and
@@ -115,6 +126,16 @@ Available evidence is limited to automated tests that verify:
 
 These tests establish software behavior and reproducibility of the pipeline.
 They do not establish model quality or generalization.
+
+The project remains **BLOCKED — NO APPROVED TRAINED GRU BUNDLE**. No approved
+real participant records or reviewed canonical frame-level labels are
+available. No real model training, calibration, candidate ranking, or
+independent held-out evaluation has occurred. Verified provenance is software
+lineage evidence only, not proof of consent, licensing, privacy approval,
+human approval, or release authorization. The smallest acceptable unblocker is
+an approved manifest with accessible records and reviewed labels, followed by
+frozen grouped training, provenance-complete checkpoint selection, calibration,
+and separately authorized held-out evaluation.
 
 ## Limitations, Risks, and Safety
 
@@ -143,4 +164,3 @@ bundles. Deterministic seeds are used by the training pipeline. The repository
 does not contain a released trained-weight artifact or real recording dataset.
 Results should therefore be reproduced only with the repository's controlled
 fixtures unless an independently documented dataset is supplied.
-
