@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vigil.cloud.app import create_app
+from vigil.ml.dataset.config import LOCKED_FEATURE_CHANNELS
 from vigil.ml.inference import TemporalInferenceEngine
 from vigil.runtime.cloud_inference import CloudInferenceEngine, CloudTransport
 from vigil.runtime.inference import ModelInferenceError
@@ -51,6 +52,31 @@ def test_transport_retries_are_bounded():
     transport.close()
 
 
+def test_cloud_connection_rejects_unapproved_bundle_before_prediction():
+    info = {
+        "feature_channels": list(LOCKED_FEATURE_CHANNELS),
+        "window_length": 60,
+        "stride": 15,
+        "input_encoding": "raw_with_masks_v1",
+        "bundle_id": "a" * 64,
+        "max_frame_gap": 2,
+        "max_time_gap_ms": 250,
+    }
+    transport = make_transport(
+        lambda _: httpx.Response(200, json=info),
+        expected_bundle_sha256="b" * 64,
+    )
+    with pytest.raises(ModelInferenceError, match="cloud model contract mismatch"):
+        transport.connect()
+    assert transport.bundle_id is None
+    transport.close()
+
+
+def test_cloud_transport_rejects_malformed_approved_digest():
+    with pytest.raises(ValueError, match="SHA-256"):
+        make_transport(lambda _: httpx.Response(200), expected_bundle_sha256="not-a-digest")
+
+
 def test_client_and_server_match_local_warmup_stride_gaps(bundle_path, live_frames):
     requests = []
     with TestClient(create_app(bundle_path, api_token=API_TOKEN)) as api:
@@ -66,7 +92,10 @@ def test_client_and_server_match_local_warmup_stride_gaps(bundle_path, live_fram
             response = api.post("/predict", json=payload, headers=headers)
             return httpx.Response(response.status_code, json=response.json())
 
-        transport = make_transport(handler).connect()
+        approved_digest = api.get("/health").json()["bundle_id"]
+        transport = make_transport(
+            handler, expected_bundle_sha256=approved_digest
+        ).connect()
         cloud = CloudInferenceEngine(transport)
         local = TemporalInferenceEngine.from_bundle(bundle_path)
         for frame in live_frames:

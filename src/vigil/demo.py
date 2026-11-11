@@ -226,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=Path, metavar="BUNDLE")
     parser.add_argument("--inference-mode", choices=("local", "cloud"), default="local")
     parser.add_argument("--cloud-endpoint")
+    parser.add_argument("--cloud-bundle-sha256")
     parser.add_argument("--cloud-timeout", type=float, default=3.0)
     parser.add_argument("--cloud-retries", type=int, default=1)
     parser.add_argument("--session-id", type=_non_empty, required=True)
@@ -282,10 +283,15 @@ def _run_demo_session(args, capture_config, resources):
     else:
         if not args.cloud_endpoint:
             raise ValueError("cloud inference requires --cloud-endpoint HTTPS_URL")
+        if not args.cloud_bundle_sha256:
+            raise ValueError("cloud inference requires --cloud-bundle-sha256 DIGEST")
         from vigil.runtime.cloud_inference import CloudInferenceEngine, CloudTransport
 
         transport = CloudTransport(
-            args.cloud_endpoint, timeout=args.cloud_timeout, retries=args.cloud_retries
+            args.cloud_endpoint,
+            timeout=args.cloud_timeout,
+            retries=args.cloud_retries,
+            expected_bundle_sha256=args.cloud_bundle_sha256,
         )
         resources.callback(transport.close)
         transport.connect()
